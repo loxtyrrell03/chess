@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Chess Trainer controls</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <div class="brand-mark" aria-hidden="true">♞</div>
+        <div>
+          <p class="eyebrow">Local engine</p>
+          <h1>Chess Trainer</h1>
+        </div>
+        <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+      </header>
+
+      <section class="connection" aria-live="polite">
+        <strong id="connection-label">Checking connection…</strong>
+        <span id="board-label">Finding the active board</span>
+      </section>
+
+      <section class="controls" aria-label="Trainer controls">
+        <div class="quick-actions">
+          <button id="analyze" type="button">Analyze now</button>
+          <button id="recalibrate" class="secondary" type="button">Recalibrate</button>
+        </div>
+
+        <label class="select-row">
+          <span>Engine</span>
+          <select id="engine">
+            <option value="stockfish">Stockfish 18</option>
+            <option value="lc0">LCZero</option>
+          </select>
+        </label>
+
+        <label class="toggle-row">
+          <span><strong>Monitoring</strong><small>Analyze board changes automatically</small></span>
+          <input id="monitoring" type="checkbox">
+        </label>
+        <label class="toggle-row">
+          <span><strong>Best-move arrows</strong><small>Show the suggested move over the board</small></span>
+          <input id="overlays" type="checkbox">
+        </label>
+        <label class="toggle-row">
+          <span><strong>Analyze opponent</strong><small>Keep evaluating when it is not your turn</small></span>
+          <input id="analyze-opponent" type="checkbox">
+        </label>
+      </section>
+
+      <p id="feedback" class="feedback" role="status"></p>
+      <footer>
+        <button id="settings" class="link-button" type="button">Advanced settings</button>
+        <span>v0.8.0</span>
+      </footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
