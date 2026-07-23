@@ -241,6 +241,7 @@ class RuntimeController:
                     "showOverlays": self.config.show_arrow,
                     "engineKind": self.config.engine_kind,
                     "engineName": getattr(self._engine, "name", "Stockfish 18"),
+                    "multiPv": self.config.multi_pv,
                     "oddsMode": effective_odds_mode,
                     "lc0Contempt": self.config.lc0_contempt,
                     "lc0AutoNetwork": self.config.lc0_auto_network,
@@ -455,6 +456,23 @@ class RuntimeController:
                 ),
                 "engineKind": self.config.engine_kind,
                 "engineName": result.engine_name or getattr(self._engine, "name", "Chess engine"),
+                "multiPv": self.config.multi_pv,
+                "variations": [
+                    {
+                        "rank": variation.rank,
+                        "uci": variation.best_move.uci(),
+                        "scoreCp": variation.score_cp,
+                        "mate": variation.mate,
+                        "depth": variation.depth,
+                    }
+                    for variation in result.variations
+                ] or [{
+                    "rank": 1,
+                    "uci": result.best_move.uci(),
+                    "scoreCp": result.score_cp,
+                    "mate": result.mate,
+                    "depth": result.depth,
+                }],
                 "oddsMode": result.odds_mode or self.config.odds_mode,
                 "effectiveContempt": result.effective_contempt,
                 "lc0AutoNetwork": self.config.lc0_auto_network,
@@ -600,6 +618,13 @@ class RuntimeController:
             value = str(message.get("value") or "stockfish").lower()
             if value in {"stockfish", "lc0"}:
                 asyncio.create_task(self._apply_engine_settings(engine_kind=value))
+        elif action == "multipv":
+            try:
+                value = int(message.get("value", 1))
+            except (TypeError, ValueError, OverflowError):
+                return
+            if 1 <= value <= 3:
+                asyncio.create_task(self._apply_engine_settings(multi_pv=value))
         elif action == "odds":
             value = str(message.get("value") or "none").lower()
             if value in {"none", "knight", "rook", "queen_for_knight", "queen"}:
@@ -646,22 +671,12 @@ class RuntimeController:
         self,
         *,
         engine_kind: str | None = None,
+        multi_pv: int | None = None,
         odds_mode: str | None = None,
         lc0_contempt: int | None = None,
         lc0_auto_network: bool | None = None,
         lc0_auto_contempt: bool | None = None,
     ) -> None:
-        if engine_kind is not None:
-            self.config.engine_kind = engine_kind
-        if odds_mode is not None:
-            self.config.odds_mode = odds_mode
-        if lc0_contempt is not None:
-            self.config.lc0_contempt = lc0_contempt
-        if lc0_auto_network is not None:
-            self.config.lc0_auto_network = lc0_auto_network
-        if lc0_auto_contempt is not None:
-            self.config.lc0_auto_contempt = lc0_auto_contempt
-        self.config.save()
         self._engine.cancel()
         tasks = [task for task in self._analysis_tasks.values() if not task.done()]
         for task in tasks:
@@ -671,6 +686,22 @@ class RuntimeController:
         self._analysis_tasks.clear()
         self._analysed_revision.clear()
         await asyncio.to_thread(self._engine.stop)
+        # Only publish the new selection after every process belonging to the
+        # previous selection has stopped. In particular, this prevents an
+        # in-flight LC0 network prewarm from overlapping Stockfish selection.
+        if engine_kind is not None:
+            self.config.engine_kind = engine_kind
+        if multi_pv is not None:
+            self.config.multi_pv = multi_pv
+        if odds_mode is not None:
+            self.config.odds_mode = odds_mode
+        if lc0_contempt is not None:
+            self.config.lc0_contempt = lc0_contempt
+        if lc0_auto_network is not None:
+            self.config.lc0_auto_network = lc0_auto_network
+        if lc0_auto_contempt is not None:
+            self.config.lc0_auto_contempt = lc0_auto_contempt
+        self.config.save()
         try:
             name = await asyncio.to_thread(self._engine.start)
             await asyncio.to_thread(self._engine.prewarm_lc0_networks)

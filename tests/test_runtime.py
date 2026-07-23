@@ -7,7 +7,7 @@ import pytest
 
 from chess_trainer.config import AppConfig
 from chess_trainer.engine import StockfishError
-from chess_trainer.models import AnalysisResult, Orientation
+from chess_trainer.models import AnalysisResult, AnalysisVariation, Orientation
 from chess_trainer.policy import classify_page
 from chess_trainer.reconcile import GameReconciler
 from chess_trainer.runtime import AnalysisGuard, RuntimeController, _is_opponent_turn, _player_color
@@ -18,6 +18,7 @@ from conftest import snapshot_for
 class FakeEngine:
     def __init__(self, move: chess.Move) -> None:
         self.move = move
+        self.variations: tuple[AnalysisVariation, ...] = ()
 
     def analyse(self, board: chess.Board, revision: int) -> AnalysisResult:
         return AnalysisResult(
@@ -32,6 +33,7 @@ class FakeEngine:
             pv_uci=(self.move.uci(),),
             pv_san=(board.san(self.move),),
             time_ms=250,
+            variations=self.variations,
         )
 
     def analyse_continuously(
@@ -138,6 +140,29 @@ async def test_opponent_arrow_toggle_allows_overlay() -> None:
 
 
 @pytest.mark.asyncio
+async def test_multipv_variations_are_published_for_multiple_arrows() -> None:
+    board = chess.Board()
+    runtime, page_id, revision, bridge = prepared_runtime(board, player_color=chess.WHITE)
+    engine = FakeEngine(chess.Move.from_uci("e2e4"))
+    engine.variations = (
+        AnalysisVariation(1, chess.Move.from_uci("e2e4"), 35, None, 16),
+        AnalysisVariation(2, chess.Move.from_uci("d2d4"), 20, None, 16),
+        AnalysisVariation(3, chess.Move.from_uci("g1f3"), 5, None, 15),
+    )
+    runtime.config.multi_pv = 3
+    runtime._engine = engine  # type: ignore[assignment]
+
+    await runtime._analyse(page_id, revision, board.copy(stack=True))
+
+    assert bridge.messages[0]["multiPv"] == 3
+    assert bridge.messages[0]["variations"] == [
+        {"rank": 1, "uci": "e2e4", "scoreCp": 35, "mate": None, "depth": 16},
+        {"rank": 2, "uci": "d2d4", "scoreCp": 20, "mate": None, "depth": 16},
+        {"rank": 3, "uci": "g1f3", "scoreCp": 5, "mate": None, "depth": 15},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_analysis_workspace_analyzes_either_side_and_shows_arrow() -> None:
     board = chess.Board()
     board.push_uci("e2e4")
@@ -168,6 +193,41 @@ async def test_lc0_failure_falls_back_to_stockfish(monkeypatch: pytest.MonkeyPat
     assert recovered
     assert runtime.config.engine_kind == "stockfish"
     assert saved
+
+
+@pytest.mark.asyncio
+async def test_selecting_stockfish_stops_lc0_before_changing_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = RuntimeController(AppConfig(engine_kind="lc0"))
+    observed: list[tuple[str, str]] = []
+
+    class SwitchingEngine:
+        def cancel(self) -> None:
+            observed.append(("cancel", runtime.config.engine_kind))
+
+        def stop(self) -> None:
+            observed.append(("stop", runtime.config.engine_kind))
+
+        def start(self) -> str:
+            observed.append(("start", runtime.config.engine_kind))
+            return "Stockfish 18"
+
+        def prewarm_lc0_networks(self) -> None:
+            observed.append(("prewarm", runtime.config.engine_kind))
+
+    monkeypatch.setattr(AppConfig, "save", lambda _config: None)
+    monkeypatch.setattr(runtime, "analyze_now", lambda: None)
+    runtime._engine = SwitchingEngine()  # type: ignore[assignment]
+
+    await runtime._apply_engine_settings(engine_kind="stockfish")
+
+    assert observed == [
+        ("cancel", "lc0"),
+        ("stop", "lc0"),
+        ("start", "stockfish"),
+        ("prewarm", "stockfish"),
+    ]
 
 
 @pytest.mark.asyncio

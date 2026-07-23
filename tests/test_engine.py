@@ -8,12 +8,14 @@ import pytest
 from chess_trainer.config import AppConfig, default_engine_path, default_lc0_paths
 from chess_trainer.engine import (
     StockfishService,
+    _analysis_variations,
     _engine_process_kwargs,
     auto_contempt_for_mode,
     auto_practical_contempt,
     detect_odds_mode,
     player_pov_evaluation,
 )
+from chess_trainer.models import AnalysisResult
 
 
 class FakeUciEngine:
@@ -53,6 +55,43 @@ def test_lc0_contempt_is_clamped() -> None:
     config = AppConfig(lc0_contempt=5000)
     config.validate()
     assert config.lc0_contempt == 1000
+
+
+@pytest.mark.parametrize(("requested", "expected"), [(0, 1), (2, 2), (8, 3)])
+def test_multipv_is_clamped_to_supported_arrow_count(requested: int, expected: int) -> None:
+    config = AppConfig(multi_pv=requested)
+    config.validate()
+    assert config.multi_pv == expected
+
+
+def test_analysis_variations_are_ranked_and_root_move_unique() -> None:
+    board = chess.Board()
+
+    def result(uci: str, score: int) -> AnalysisResult:
+        move = chess.Move.from_uci(uci)
+        return AnalysisResult(
+            revision=1,
+            fen=board.fen(),
+            best_move=move,
+            score_cp=score,
+            mate=None,
+            depth=12,
+            nodes=100,
+            nps=1000,
+            pv_uci=(uci,),
+            pv_san=(board.san(move),),
+        )
+
+    variations = _analysis_variations({
+        3: result("g1f3", 10),
+        1: result("e2e4", 30),
+        2: result("e2e4", 20),
+    })
+
+    assert [(item.rank, item.best_move.uci()) for item in variations] == [
+        (1, "e2e4"),
+        (3, "g1f3"),
+    ]
 
 
 def test_new_analysis_generation_invalidates_queued_work() -> None:

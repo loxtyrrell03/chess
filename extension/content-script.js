@@ -67,7 +67,7 @@
   let arrowOverlay = null;
   let evalOverlay = null;
   let dashboard = null;
-  let dashboardState = { site: siteLabel(), monitoring: true, showOverlays: true, engineKind: "stockfish", oddsMode: "none", lc0Contempt: 0, lc0AutoNetwork: false, lc0AutoContempt: false, analyzeOpponent: false, showOpponentArrows: false };
+  let dashboardState = { site: siteLabel(), monitoring: true, showOverlays: true, engineKind: "stockfish", multiPv: 1, oddsMode: "none", lc0Contempt: 0, lc0AutoNetwork: false, lc0AutoContempt: false, analyzeOpponent: false, showOpponentArrows: false };
   let dashboardPlacement = null;
   let activeGameMarker = "";
   let lastBoardElement = null;
@@ -919,6 +919,7 @@
           </section>
           <section class="settings">
             <label class="field"><span>Engine</span><select class="engine-select"><option value="stockfish">Stockfish 18</option><option value="lc0">LCZero 0.32.1</option></select></label>
+            <label class="field"><span>Arrows</span><select class="multipv-select"><option value="1">1 best move</option><option value="2">2 best moves</option><option value="3">3 best moves</option></select></label>
             <label class="field"><span>Odds network</span><select class="odds-select"><option value="none">None (BT4)</option><option value="knight">Knight odds</option><option value="rook">Rook odds</option><option value="queen_for_knight">Queen for knight</option><option value="queen">Queen odds (LQO)</option></select></label>
             <label class="field contempt"><span class="contempt-head"><span>LC0 contempt</span><output class="contempt-value">0</output></span><input class="contempt-slider" type="range" min="-1000" max="1000" step="25" value="0"></label>
             <div class="checks"><label class="check"><input class="auto-network" type="checkbox">Auto network</label><label class="check"><input class="auto-contempt" type="checkbox">Auto contempt</label><label class="check"><input class="analyze-opponent" type="checkbox">Analyze opponent</label><label class="check"><input class="opponent-arrows" type="checkbox">Opponent arrows</label></div>
@@ -994,7 +995,7 @@
       nodes: shadow.querySelector(".nodes"), nps: shadow.querySelector(".nps"), time: shadow.querySelector(".time"),
       board: shadow.querySelector(".board"), moves: shadow.querySelector(".moves"), pv: shadow.querySelector(".pv"),
       monitor: shadow.querySelector('[data-action="monitoring"]'), overlays: shadow.querySelector('[data-action="overlays"]'),
-      engineName: shadow.querySelector(".engine-name"), engineSelect: shadow.querySelector(".engine-select"),
+      engineName: shadow.querySelector(".engine-name"), engineSelect: shadow.querySelector(".engine-select"), multiPvSelect: shadow.querySelector(".multipv-select"),
       oddsSelect: shadow.querySelector(".odds-select"), contemptSlider: shadow.querySelector(".contempt-slider"),
       contemptValue: shadow.querySelector(".contempt-value"), analyzeOpponent: shadow.querySelector(".analyze-opponent"),
       opponentArrows: shadow.querySelector(".opponent-arrows"), autoNetwork: shadow.querySelector(".auto-network"),
@@ -1004,6 +1005,11 @@
       dashboardState.engineKind = dashboard.engineSelect.value;
       updateDashboardState(dashboardState);
       sendDashboardAction("engine", undefined, dashboard.engineSelect.value);
+    });
+    dashboard.multiPvSelect.addEventListener("change", () => {
+      dashboardState.multiPv = Number(dashboard.multiPvSelect.value);
+      updateDashboardState(dashboardState);
+      sendDashboardAction("multipv", undefined, dashboardState.multiPv);
     });
     dashboard.oddsSelect.addEventListener("change", () => {
       dashboardState.oddsMode = dashboard.oddsSelect.value;
@@ -1094,6 +1100,7 @@
     dashboard.overlays.classList.toggle("on", Boolean(dashboardState.showOverlays));
     dashboard.engineName.textContent = dashboardState.engineName || (dashboardState.engineKind === "lc0" ? "LCZero 0.32.1" : "Stockfish 18");
     dashboard.engineSelect.value = dashboardState.engineKind === "lc0" ? "lc0" : "stockfish";
+    dashboard.multiPvSelect.value = String([1, 2, 3].includes(dashboardState.multiPv) ? dashboardState.multiPv : 1);
     dashboard.oddsSelect.value = ["none", "knight", "rook", "queen_for_knight", "queen"].includes(dashboardState.oddsMode) ? dashboardState.oddsMode : "none";
     dashboard.contemptSlider.value = dashboardState.lc0AutoContempt ? "0" : String(Number.isSafeInteger(dashboardState.lc0Contempt) ? dashboardState.lc0Contempt : 0);
     dashboard.contemptValue.textContent = dashboardState.lc0AutoContempt ? "Auto +0" : dashboard.contemptSlider.value;
@@ -1347,6 +1354,17 @@
       show_overlays: command.show_overlays !== false && command.showOverlays !== false,
       engine_name: String(command.engine_name || command.engineName || ""),
       engine_kind: String(command.engine_kind || command.engineKind || ""),
+      multi_pv: Number.isSafeInteger(command.multi_pv) ? Math.max(1, Math.min(3, command.multi_pv)) : 1,
+      variations: (Array.isArray(command.variations) ? command.variations : [])
+        .filter((variation) => isPlainObject(variation) && typeof variation.uci === "string")
+        .map((variation, index) => ({
+          rank: Number.isSafeInteger(variation.rank) ? variation.rank : index + 1,
+          uci: String(variation.uci).toLowerCase(),
+          score_cp: Number.isFinite(variation.score_cp) ? variation.score_cp : null,
+          mate: Number.isSafeInteger(variation.mate) ? variation.mate : null,
+          depth: Number.isSafeInteger(variation.depth) ? variation.depth : null
+        }))
+        .slice(0, 3),
       odds_mode: String(command.odds_mode || command.oddsMode || "none"),
       effective_contempt: Number.isSafeInteger(command.effective_contempt) ? command.effective_contempt : Number.isSafeInteger(command.effectiveContempt) ? command.effectiveContempt : null,
       lc0_auto_network: command.lc0_auto_network === true || command.lc0AutoNetwork === true,
@@ -1366,11 +1384,13 @@
       return;
     }
 
-    const from = squareCenter(normalized.uci.slice(0, 2), currentBoard, currentSnapshot.board.orientation);
-    const to = squareCenter(normalized.uci.slice(2, 4), currentBoard, currentSnapshot.board.orientation);
-    if (!from || !to) return;
     const rect = currentBoard.getBoundingClientRect();
     if (rect.width < 1 || rect.height < 1) return;
+    const rawVariations = normalized.variations.length
+      ? normalized.variations
+      : [{ rank: 1, uci: normalized.uci, score_cp: normalized.white_score_cp, mate: normalized.white_mate, depth: normalized.depth }];
+    const variations = visibleEngineVariations(rawVariations);
+    if (!variations.length) return;
 
     removeArrowOverlay();
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
@@ -1388,41 +1408,80 @@
     });
 
     const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
-    const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
-    marker.setAttribute("id", "chess-trainer-best-move-head");
-    marker.setAttribute("markerWidth", "4");
-    marker.setAttribute("markerHeight", "4");
-    marker.setAttribute("refX", "2.05");
-    marker.setAttribute("refY", "2");
-    marker.setAttribute("orient", "auto");
-    marker.setAttribute("markerUnits", "strokeWidth");
-    marker.setAttribute("overflow", "visible");
-    const head = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    head.setAttribute("d", "M0,0 V4 L3,2 Z");
-    head.setAttribute("fill", "#2f6fad");
-    marker.appendChild(head);
-    defs.appendChild(marker);
     svg.appendChild(defs);
 
-    const dx = to.x - from.x;
-    const dy = to.y - from.y;
-    const angle = Math.atan2(dy, dx);
-    const arrowMargin = rect.width / 51.2;
-    const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-    line.setAttribute("x1", String(from.x - rect.left));
-    line.setAttribute("y1", String(from.y - rect.top));
-    line.setAttribute("x2", String(to.x - rect.left - Math.cos(angle) * arrowMargin));
-    line.setAttribute("y2", String(to.y - rect.top - Math.sin(angle) * arrowMargin));
-    line.setAttribute("stroke", "#2f6fad");
-    line.setAttribute("stroke-width", String(Math.max(6, rect.width * 14 / 512)));
-    line.setAttribute("stroke-linecap", "round");
-    line.setAttribute("opacity", "0.72");
-    line.setAttribute("marker-end", "url(#chess-trainer-best-move-head)");
-    svg.appendChild(line);
+    for (const [index, variation] of variations.entries()) {
+      const from = squareCenter(variation.uci.slice(0, 2), currentBoard, currentSnapshot.board.orientation);
+      const to = squareCenter(variation.uci.slice(2, 4), currentBoard, currentSnapshot.board.orientation);
+      if (!from || !to) continue;
+      const opacity = index === 0 ? 0.72 : index === 1 ? 0.42 : 0.27;
+      const markerId = `chess-trainer-best-move-head-${index}`;
+      const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
+      marker.setAttribute("id", markerId);
+      marker.setAttribute("markerWidth", "4");
+      marker.setAttribute("markerHeight", "4");
+      marker.setAttribute("refX", "2.05");
+      marker.setAttribute("refY", "2");
+      marker.setAttribute("orient", "auto");
+      marker.setAttribute("markerUnits", "strokeWidth");
+      marker.setAttribute("overflow", "visible");
+      const head = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      head.setAttribute("d", "M0,0 V4 L3,2 Z");
+      head.setAttribute("fill", "#2f6fad");
+      head.setAttribute("opacity", String(opacity));
+      marker.appendChild(head);
+      defs.appendChild(marker);
+
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const angle = Math.atan2(dy, dx);
+      const arrowMargin = rect.width / 51.2;
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", String(from.x - rect.left));
+      line.setAttribute("y1", String(from.y - rect.top));
+      line.setAttribute("x2", String(to.x - rect.left - Math.cos(angle) * arrowMargin));
+      line.setAttribute("y2", String(to.y - rect.top - Math.sin(angle) * arrowMargin));
+      line.setAttribute("stroke", "#2f6fad");
+      line.setAttribute("stroke-width", String(rect.width * variation.brushWidth / 512));
+      line.setAttribute("stroke-linecap", "round");
+      line.setAttribute("opacity", String(opacity));
+      line.setAttribute("marker-end", `url(#${markerId})`);
+      svg.appendChild(line);
+    }
 
     document.documentElement.appendChild(svg);
 
     arrowOverlay = svg;
+  }
+
+  function visibleEngineVariations(rawVariations) {
+    const sorted = [...rawVariations]
+      .filter((variation) => /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(variation.uci))
+      .sort((left, right) => left.rank - right.rank);
+    if (!sorted.length) return [];
+    const bestWinChance = engineWinChance(sorted[0]);
+    const seen = new Set();
+    const visible = [];
+    for (const variation of sorted) {
+      if (seen.has(variation.uci)) continue;
+      const winChance = engineWinChance(variation);
+      const winChanceDrop = bestWinChance === null || winChance === null ? (variation.rank - 1) * 2.5 : bestWinChance - winChance;
+      if (winChanceDrop >= 10) continue;
+      seen.add(variation.uci);
+      visible.push({
+        ...variation,
+        brushWidth: winChanceDrop < 2.5 ? 11 : winChanceDrop < 5 ? 7.5 : 4
+      });
+    }
+    return visible;
+  }
+
+  function engineWinChance(variation) {
+    const score = variation.mate !== null
+      ? (variation.mate > 0 ? 100000 : -100000)
+      : variation.score_cp;
+    if (!Number.isFinite(score)) return null;
+    return 50 + 50 * (2 / (1 + Math.exp(-0.00368208 * score)) - 1);
   }
 
   function targetBelongsToBoard(target, board) {

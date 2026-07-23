@@ -435,6 +435,17 @@ async function handleArrowCommand(message, clear = false) {
         show_overlays: incoming.showOverlays !== false,
         engine_name: typeof incoming.engineName === "string" ? incoming.engineName.slice(0, 100) : "",
         engine_kind: incoming.engineKind === "lc0" ? "lc0" : "stockfish",
+        multi_pv: Number.isSafeInteger(incoming.multiPv) ? Math.max(1, Math.min(3, incoming.multiPv)) : 1,
+        variations: (Array.isArray(incoming.variations) ? incoming.variations : [])
+          .slice(0, 3)
+          .filter((variation) => isPlainObject(variation) && typeof variation.uci === "string" && /^[a-h][1-8][a-h][1-8][qrbn]?$/i.test(variation.uci))
+          .map((variation, index) => ({
+            rank: Number.isSafeInteger(variation.rank) ? Math.max(1, Math.min(3, variation.rank)) : index + 1,
+            uci: variation.uci.toLowerCase(),
+            score_cp: Number.isFinite(variation.scoreCp) ? Math.max(-100000, Math.min(100000, variation.scoreCp)) : null,
+            mate: Number.isSafeInteger(variation.mate) ? variation.mate : null,
+            depth: Number.isSafeInteger(variation.depth) ? variation.depth : null
+          })),
         odds_mode: typeof incoming.oddsMode === "string" ? incoming.oddsMode.slice(0, 32) : "none",
         effective_contempt: Number.isSafeInteger(incoming.effectiveContempt) ? incoming.effectiveContempt : null,
         lc0_auto_network: incoming.lc0AutoNetwork === true,
@@ -518,6 +529,7 @@ function optimisticDashboardState(context, action, enabled, value) {
     analyze_opponent: "analyzeOpponent",
     opponent_arrows: "showOpponentArrows",
     engine: "engineKind",
+    multipv: "multiPv",
     odds: "oddsMode",
     contempt: "lc0Contempt",
     auto_network: "lc0AutoNetwork",
@@ -537,7 +549,7 @@ function optimisticDashboardState(context, action, enabled, value) {
 async function handlePopupAction(message) {
   const allowed = new Set([
     "analyze", "recalibrate", "monitoring", "overlays", "analyze_opponent",
-    "opponent_arrows", "engine", "odds", "contempt", "auto_network", "auto_contempt"
+    "opponent_arrows", "engine", "multipv", "odds", "contempt", "auto_network", "auto_contempt"
   ]);
   const action = String(message.action || "");
   if (!allowed.has(action)) return { ok: false, reason: "unsupported_action" };
@@ -636,7 +648,7 @@ chrome.runtime.onConnect.addListener((port) => {
     else if (message.type === "content.move_result") acceptMoveResult(entry, message.result);
     else if (message.type === "dashboard.action") {
       const action = String(message.action || "");
-      if (!["analyze", "recalibrate", "monitoring", "overlays", "analyze_opponent", "opponent_arrows", "engine", "odds", "contempt", "auto_network", "auto_contempt"].includes(action)) return;
+      if (!["analyze", "recalibrate", "monitoring", "overlays", "analyze_opponent", "opponent_arrows", "engine", "multipv", "odds", "contempt", "auto_network", "auto_contempt"].includes(action)) return;
       if (sessionOwners.get(message.pageId) !== key) return;
       sendWire({
         v: PROTOCOL_VERSION,

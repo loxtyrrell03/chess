@@ -88,7 +88,7 @@ class AppConfig:
         self.threads = min(16, max(1, _int_or(self.threads, 14)))
         self.hash_mb = min(16384, max(16, _int_or(self.hash_mb, 4096)))
         self.think_time_ms = min(120_000, max(100, _int_or(self.think_time_ms, 2000)))
-        self.multi_pv = 1
+        self.multi_pv = min(3, max(1, _int_or(self.multi_pv, 1)))
         self.skill_level = 20
         self.engine_path = str(self.engine_path or default_engine_path())
         self.syzygy_path = str(self.syzygy_path or "")

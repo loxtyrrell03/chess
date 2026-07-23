@@ -146,6 +146,15 @@ class Transition:
 
 
 @dataclass(frozen=True, slots=True)
+class AnalysisVariation:
+    rank: int
+    best_move: chess.Move
+    score_cp: int | None
+    mate: int | None
+    depth: int | None
+
+
+@dataclass(frozen=True, slots=True)
 class AnalysisResult:
     revision: int
     fen: str
@@ -161,6 +170,7 @@ class AnalysisResult:
     odds_mode: str | None = None
     effective_contempt: int | None = None
     engine_name: str | None = None
+    variations: tuple[AnalysisVariation, ...] = ()
 
 
 def is_square(value: str) -> bool:

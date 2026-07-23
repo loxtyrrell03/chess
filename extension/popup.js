@@ -8,6 +8,7 @@
     analyze: document.getElementById("analyze"),
     recalibrate: document.getElementById("recalibrate"),
     engine: document.getElementById("engine"),
+    multiPv: document.getElementById("multipv"),
     monitoring: document.getElementById("monitoring"),
     overlays: document.getElementById("overlays"),
     analyzeOpponent: document.getElementById("analyze-opponent"),
@@ -16,7 +17,7 @@
   };
 
   const boardControls = [
-    elements.analyze, elements.recalibrate, elements.engine,
+    elements.analyze, elements.recalibrate, elements.engine, elements.multiPv,
     elements.monitoring, elements.overlays, elements.analyzeOpponent
   ];
 
@@ -38,6 +39,7 @@
     boardControls.forEach((control) => { control.disabled = !enabled; });
     const state = data?.dashboard || {};
     elements.engine.value = state.engineKind === "lc0" ? "lc0" : "stockfish";
+    elements.multiPv.value = String([1, 2, 3].includes(state.multiPv) ? state.multiPv : 1);
     elements.monitoring.checked = state.monitoring !== false;
     elements.overlays.checked = state.showOverlays !== false;
     elements.analyzeOpponent.checked = state.analyzeOpponent === true;
@@ -72,6 +74,7 @@
   elements.analyze.addEventListener("click", () => void sendAction("analyze"));
   elements.recalibrate.addEventListener("click", () => void sendAction("recalibrate"));
   elements.engine.addEventListener("change", () => void sendAction("engine", { value: elements.engine.value }));
+  elements.multiPv.addEventListener("change", () => void sendAction("multipv", { value: Number(elements.multiPv.value) }));
   elements.monitoring.addEventListener("change", () => void sendAction("monitoring", { enabled: elements.monitoring.checked }));
   elements.overlays.addEventListener("change", () => void sendAction("overlays", { enabled: elements.overlays.checked }));
   elements.analyzeOpponent.addEventListener("change", () => void sendAction("analyze_opponent", { enabled: elements.analyzeOpponent.checked }));

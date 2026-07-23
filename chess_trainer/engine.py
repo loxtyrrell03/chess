@@ -13,7 +13,7 @@ import chess
 import chess.engine
 
 from .config import AppConfig
-from .models import AnalysisResult
+from .models import AnalysisResult, AnalysisVariation
 
 
 LOGGER = logging.getLogger(__name__)
@@ -512,9 +512,11 @@ class StockfishService:
                     limit=self._analysis_limit(board),
                     info=LIVE_INFO,
                     game=game_token,
+                    multipv=self.config.multi_pv,
                 )
                 with self._active_lock:
                     self._active_analysis = analysis
+                latest_variations: dict[int, AnalysisResult] = {}
                 for info in analysis:
                     if not self._generation_is_current(cancel_generation):
                         analysis.stop()
@@ -522,14 +524,29 @@ class StockfishService:
                     result = _result_from_info(board, revision, info)
                     if result is None:
                         continue
+                    rank = info.get("multipv", 1)
+                    if not isinstance(rank, int) or rank < 1:
+                        rank = 1
+                    latest_variations[rank] = result
+                    primary = latest_variations.get(1)
+                    if primary is None:
+                        continue
                     result = replace(
-                        result,
+                        primary,
                         odds_mode=odds_mode,
                         effective_contempt=effective_contempt,
+                        variations=_analysis_variations(latest_variations),
                     )
-                    signature = (result.best_move, result.depth, result.score_cp, result.mate)
+                    signature = tuple(
+                        (item.best_move, item.depth, item.score_cp, item.mate)
+                        for item in result.variations
+                    )
                     now = time.monotonic()
-                    best_move_changed = last_signature is None or signature[0] != last_signature[0]
+                    best_move_changed = (
+                        last_signature is None
+                        or not signature
+                        or signature[0][0] != last_signature[0][0]
+                    )
                     if not best_move_changed and now - last_published_at < 0.10:
                         continue
                     if signature == last_signature and now - last_published_at < 0.50:
@@ -568,21 +585,25 @@ class StockfishService:
 
     def stop(self) -> None:
         self.cancel()
-        with self._preview_lock:
-            preview, self._preview_engine = self._preview_engine, None
-            if preview is not None:
-                try:
-                    preview.quit()
-                except (chess.engine.EngineError, chess.engine.EngineTerminatedError, TimeoutError):
-                    preview.close()
-        with self._lock:
-            engine, self._engine = self._engine, None
-            pooled = list(self._engine_pool.values())
-            self._engine_pool.clear()
-            self._dynamic_options = {}
-            self._loaded_weights = None
-        for item in ([engine] if engine is not None else []) + pooled:
-            _close_engine(item)
+        # Serialize shutdown with both analysis and LC0 prewarming. Otherwise a
+        # prewarm already running in a worker thread can launch another LC0
+        # process after an engine switch has begun.
+        with self._search_lock:
+            with self._preview_lock:
+                preview, self._preview_engine = self._preview_engine, None
+                if preview is not None:
+                    try:
+                        preview.quit()
+                    except (chess.engine.EngineError, chess.engine.EngineTerminatedError, TimeoutError):
+                        preview.close()
+            with self._lock:
+                engine, self._engine = self._engine, None
+                pooled = list(self._engine_pool.values())
+                self._engine_pool.clear()
+                self._dynamic_options = {}
+                self._loaded_weights = None
+            for item in ([engine] if engine is not None else []) + pooled:
+                _close_engine(item)
 
 
 def _engine_label(kind: str) -> str:
@@ -729,3 +750,22 @@ def _result_from_info(board: chess.Board, revision: int, info: dict[str, object]
             else None
         ),
     )
+
+
+def _analysis_variations(results: dict[int, AnalysisResult]) -> tuple[AnalysisVariation, ...]:
+    """Return ordered, root-move-unique MultiPV lines for the current search."""
+
+    variations: list[AnalysisVariation] = []
+    seen_moves: set[chess.Move] = set()
+    for rank, result in sorted(results.items()):
+        if result.best_move in seen_moves:
+            continue
+        seen_moves.add(result.best_move)
+        variations.append(AnalysisVariation(
+            rank=rank,
+            best_move=result.best_move,
+            score_cp=result.score_cp,
+            mate=result.mate,
+            depth=result.depth,
+        ))
+    return tuple(variations)

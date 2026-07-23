@@ -35,13 +35,21 @@
             <option value="lc0">LCZero</option>
           </select>
         </label>
+        <label class="select-row">
+          <span>Best-move arrows</span>
+          <select id="multipv">
+            <option value="1">1 arrow</option>
+            <option value="2">2 arrows</option>
+            <option value="3">3 arrows</option>
+          </select>
+        </label>
 
         <label class="toggle-row">
           <span><strong>Monitoring</strong><small>Analyze board changes automatically</small></span>
           <input id="monitoring" type="checkbox">
         </label>
         <label class="toggle-row">
-          <span><strong>Best-move arrows</strong><small>Show the suggested move over the board</small></span>
+          <span><strong>Show arrows</strong><small>Show the selected number of engine moves</small></span>
           <input id="overlays" type="checkbox">
         </label>
         <label class="toggle-row">

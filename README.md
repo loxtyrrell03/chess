@@ -45,13 +45,13 @@ The configured continuous-analysis profile is:
 ```text
 Threads: 14
 Hash: 4096 MiB
-MultiPV: 1
+MultiPV: selectable from 1–3
 Skill Level: 20
 UCI_LimitStrength: false
 Search limit: none; the current principal variation is streamed while the position is unchanged
 ```
 
-The engine keeps refining the current position until the board changes. LCZero uses the CUDA FP16 backend on the NVIDIA GPU for faster first results. Sixteen Stockfish threads is available as a dedicated-CPU setting, but 14 keeps the browser and Windows responsive.
+The engine keeps refining the current position until the board changes. MultiPV arrows follow the En Croissant fork's win-chance thresholds: moves at least 10 percentage points below the best line are hidden, while the remaining alternatives use progressively thinner and more transparent arrows. LCZero uses the CUDA FP16 backend on the NVIDIA GPU for faster first results. Sixteen Stockfish threads is available as a dedicated-CPU setting, but 14 keeps the browser and Windows responsive.
 
 ## Install the browser extension
 
