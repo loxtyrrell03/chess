@@ -84,6 +84,16 @@ pieces in every confirmed position. LQO is never selected merely because
 several non-queen pieces add up to nine points, and it is left as soon as
 meaningful captured-piece compensation makes T1 or BT4 a better match.
 
+The dashboard publishes the selected family together with the exact
+player-relative reason on every synchronized position. It names each unmatched
+piece group, identifies captured material as compensation, and shows the net
+balance. For example, a missing queen after winning two pawns is displayed as
+`T1 queen-for-material — queen gap (9); compensation: 2 pawns (2); net -7`,
+while a missing queen with only one pawn back is
+`LQO near-full queen — queen gap (9); compensation: pawn (1); net -8`. Manual
+selection and Stockfish mode are identified explicitly instead of presenting
+an automatic-material explanation.
+
 Network changes are accepted immediately for positions confirmed by legal move
 reconciliation, move history, or a declared FEN. A DOM-only fallback placement
 is provisional: analysis is cancelled, the last confirmed per-page mode remains

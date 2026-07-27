@@ -10,6 +10,13 @@
   const STANDARD_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   const ALLOWED_HOSTS = new Set(["chess.com", "www.chess.com", "lichess.org", "www.lichess.org"]);
   const FILES = "abcdefgh";
+  const ODDS_MODE_LABELS = Object.freeze({
+    none: "BT4 normal",
+    knight: "T1 minor-equivalent",
+    rook: "T1 rook-equivalent",
+    queen_for_knight: "T1 queen-for-material",
+    queen: "LQO near-full queen"
+  });
   const PIECE_NAMES = {
     pawn: "p",
     knight: "n",
@@ -67,7 +74,7 @@
   let arrowOverlay = null;
   let evalOverlay = null;
   let dashboard = null;
-  let dashboardState = { site: siteLabel(), monitoring: true, showOverlays: true, engineKind: "stockfish", multiPv: 1, oddsMode: "none", lc0Contempt: 0, lc0AutoNetwork: false, lc0AutoContempt: false, analyzeOpponent: false, showOpponentArrows: false };
+  let dashboardState = { site: siteLabel(), monitoring: true, showOverlays: true, engineKind: "stockfish", multiPv: 1, oddsMode: "none", oddsTitle: "Network pending", oddsReason: "Waiting for a synchronized position.", lc0Contempt: 0, lc0AutoNetwork: false, lc0AutoContempt: false, analyzeOpponent: false, showOpponentArrows: false };
   let dashboardPlacement = null;
   let activeGameMarker = "";
   let lastBoardElement = null;
@@ -895,7 +902,7 @@
         .body{padding:10px}.panel.collapsed .body{display:none}.panel.collapsed .head{border-bottom:0}.muted{color:#969da7;font-size:11px}.sync{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:7px}
         .workspace{display:grid;grid-template-columns:150px minmax(0,1fr);gap:10px;align-items:start}.board{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));grid-template-rows:repeat(8,minmax(0,1fr));width:150px;height:150px;aspect-ratio:1;border-radius:4px;overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.35)}.sq{position:relative;display:flex;align-items:center;justify-content:center;min-width:0;min-height:0;overflow:hidden}.sq.light{background:#eeeed2}.sq.dark{background:#769656}.piece{display:block;width:100%;height:100%;max-width:100%;max-height:100%;object-fit:contain;pointer-events:none;user-select:none}.coord{position:absolute;z-index:1;font-size:7px;font-weight:800;line-height:1}.coord.file{right:2px;bottom:1px}.coord.rank{left:2px;top:2px}.sq.light .coord{color:#769656}.sq.dark .coord{color:#eeeed2}
         .moves{height:150px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.07);border-radius:5px;padding:6px 7px;color:#d0d5dc;scrollbar-width:thin}.move-row{display:grid;grid-template-columns:24px 1fr 1fr;gap:4px;padding:1px 0}.move-no{color:#777f89}.empty-moves{color:#777f89;padding:5px 2px}
-        .engine{margin-top:10px;border:1px solid rgba(255,255,255,.11);border-radius:7px;background:rgba(10,11,14,.26);overflow:hidden}.engine-head{display:flex;align-items:center;gap:7px;min-height:34px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.08)}.engine-mark{width:4px;align-self:stretch;border-radius:4px;background:#2f6fad}.engine-name{font-weight:750}.engine-state{min-width:0;flex:1;color:#929aa5;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.eval-badge{font:750 13px/1 ui-monospace,SFMono-Regular,Consolas,monospace;padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.08)}
+        .engine{margin-top:10px;border:1px solid rgba(255,255,255,.11);border-radius:7px;background:rgba(10,11,14,.26);overflow:hidden}.engine-head{display:flex;align-items:center;gap:7px;min-height:34px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.08)}.engine-mark{width:4px;align-self:stretch;border-radius:4px;background:#2f6fad}.engine-name{font-weight:750}.engine-state{min-width:0;flex:1;color:#929aa5;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.eval-badge{font:750 13px/1 ui-monospace,SFMono-Regular,Consolas,monospace;padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.08)}.odds-status{display:grid;gap:2px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.07);background:rgba(47,111,173,.08)}.odds-title{color:#dbeeff;font-size:10px;font-weight:750}.odds-reason{color:#929daa;font-size:9.5px;line-height:1.35}
         .metrics{display:grid;grid-template-columns:repeat(5,1fr);padding:7px 6px 6px}.metric{text-align:center;border-right:1px solid rgba(255,255,255,.07)}.metric:last-child{border-right:0}.metric-label{display:block;color:#7f8791;font-size:9px;font-weight:700;letter-spacing:.45px;text-transform:uppercase}.metric-value{display:block;margin-top:2px;color:#e7eaf0;font:700 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace}
         .engine-lines-head{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 5px;border-top:1px solid rgba(255,255,255,.07);color:#7f8791;font-size:9px;font-weight:750;letter-spacing:.45px;text-transform:uppercase}.lines-control{display:flex;align-items:center;gap:5px}.lines-control select{border:1px solid rgba(255,255,255,.12);border-radius:4px;background:#25272c;color:#e9edf2;padding:2px 18px 2px 5px;font:700 10px "Segoe UI",sans-serif}.engine-lines{display:grid;gap:4px;padding:0 7px 7px}.line{display:grid;grid-template-columns:17px 43px minmax(0,1fr);gap:6px;align-items:baseline;padding:6px 7px;border-radius:5px;background:rgba(255,255,255,.045)}.line:first-child{background:rgba(47,111,173,.13);box-shadow:inset 2px 0 #2f6fad}.line-rank{color:#69727e;font:750 9px ui-monospace,SFMono-Regular,Consolas,monospace}.line-score{color:#e6e9ed;font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace}.pv{min-width:0;color:#aeb5bf;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .settings{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px;padding:8px;border:1px solid rgba(255,255,255,.1);border-radius:7px;background:rgba(10,11,14,.2)}.field{display:grid;gap:3px}.field>span,.contempt-head{color:#8f97a2;font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}.field select{width:100%;border:1px solid rgba(255,255,255,.13);border-radius:4px;background:#292b30;color:#edf0f4;padding:5px;font:600 11px "Segoe UI",sans-serif}.contempt{grid-column:1/-1}.contempt-head{display:flex;justify-content:space-between}.contempt-value{color:#dce6f2;font:700 10px ui-monospace,SFMono-Regular,Consolas,monospace}.contempt input{width:100%;accent-color:#2f6fad}.checks{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:5px}.check{display:flex;align-items:center;gap:5px;color:#b7bec8;font-size:10px;cursor:pointer}.check input{accent-color:#2f6fad}.hint{grid-column:1/-1;color:#777f89;font-size:9px;line-height:1.3}
@@ -908,6 +915,7 @@
           <div class="workspace"><div class="board"></div><div class="moves"><div class="empty-moves">Moves will appear here</div></div></div>
           <section class="engine thinking">
             <div class="engine-head"><span class="engine-mark"></span><span class="engine-name">Stockfish 18</span><span class="engine-state">Waiting for a position</span><span class="eval-badge">—</span></div>
+            <div class="odds-status"><span class="odds-title">Network pending</span><span class="odds-reason">Waiting for a synchronized position.</span></div>
             <div class="metrics">
               <div class="metric"><span class="metric-label">Eval</span><span class="metric-value metric-eval">—</span></div>
               <div class="metric"><span class="metric-label">Depth</span><span class="metric-value depth">—</span></div>
@@ -991,6 +999,7 @@
       dot: shadow.querySelector(".dot"), connection: shadow.querySelector(".connection"),
       site: shadow.querySelector(".site"), sync: shadow.querySelector(".sync"), engine: shadow.querySelector(".engine"),
       engineState: shadow.querySelector(".engine-state"), evalBadge: shadow.querySelector(".eval-badge"),
+      oddsTitle: shadow.querySelector(".odds-title"), oddsReason: shadow.querySelector(".odds-reason"),
       metricEval: shadow.querySelector(".metric-eval"), depth: shadow.querySelector(".depth"),
       nodes: shadow.querySelector(".nodes"), nps: shadow.querySelector(".nps"), time: shadow.querySelector(".time"),
       board: shadow.querySelector(".board"), moves: shadow.querySelector(".moves"), engineLines: shadow.querySelector(".engine-lines"),
@@ -1013,6 +1022,9 @@
     });
     dashboard.oddsSelect.addEventListener("change", () => {
       dashboardState.oddsMode = dashboard.oddsSelect.value;
+      dashboardState.oddsTitle = ODDS_MODE_LABELS[dashboardState.oddsMode] || dashboardState.oddsMode;
+      dashboardState.oddsReason = "Manual selection requested; waiting for the control centre.";
+      updateDashboardState(dashboardState);
       sendDashboardAction("odds", undefined, dashboard.oddsSelect.value);
     });
     dashboard.contemptSlider.addEventListener("input", () => { dashboard.contemptValue.textContent = dashboard.contemptSlider.value; });
@@ -1102,6 +1114,8 @@
     dashboard.engineSelect.value = dashboardState.engineKind === "lc0" ? "lc0" : "stockfish";
     dashboard.multiPvSelect.value = String([1, 2, 3].includes(dashboardState.multiPv) ? dashboardState.multiPv : 1);
     dashboard.oddsSelect.value = ["none", "knight", "rook", "queen_for_knight", "queen"].includes(dashboardState.oddsMode) ? dashboardState.oddsMode : "none";
+    dashboard.oddsTitle.textContent = dashboardState.oddsTitle || ODDS_MODE_LABELS[dashboardState.oddsMode] || "LCZero network";
+    dashboard.oddsReason.textContent = dashboardState.oddsReason || "Waiting for the material explanation.";
     dashboard.contemptSlider.value = dashboardState.lc0AutoContempt ? "0" : String(Number.isSafeInteger(dashboardState.lc0Contempt) ? dashboardState.lc0Contempt : 0);
     dashboard.contemptValue.textContent = dashboardState.lc0AutoContempt ? "Auto +0" : dashboard.contemptSlider.value;
     dashboard.autoNetwork.checked = Boolean(dashboardState.lc0AutoNetwork);
@@ -1159,14 +1173,17 @@
     }
     if (analysis.engine_name) dashboard.engineName.textContent = analysis.engine_name;
     dashboard.engine.classList.toggle("thinking", Boolean(dashboardState.monitoring));
-    const networkLabels = { none: "BT4 normal", knight: "T1 minor-equivalent", rook: "T1 rook-equivalent", queen_for_knight: "T1 queen-for-material", queen: "LQO near-full queen" };
-    const networkLabel = networkLabels[analysis.odds_mode] || String(analysis.odds_mode || "BT4").replaceAll("_", " ");
-    if (dashboardState.lc0AutoNetwork && Object.hasOwn(networkLabels, analysis.odds_mode)) {
+    const networkLabel = analysis.odds_title || ODDS_MODE_LABELS[analysis.odds_mode] || String(analysis.odds_mode || "BT4").replaceAll("_", " ");
+    if (dashboardState.lc0AutoNetwork && Object.hasOwn(ODDS_MODE_LABELS, analysis.odds_mode)) {
       dashboardState.oddsMode = analysis.odds_mode;
       dashboard.oddsSelect.value = analysis.odds_mode;
     }
+    dashboardState.oddsTitle = networkLabel;
+    dashboardState.oddsReason = analysis.odds_reason || dashboardState.oddsReason;
+    dashboard.oddsTitle.textContent = dashboardState.oddsTitle;
+    dashboard.oddsReason.textContent = dashboardState.oddsReason;
     const contemptLabel = Number.isSafeInteger(analysis.effective_contempt) ? `C${analysis.effective_contempt >= 0 ? "+" : ""}${analysis.effective_contempt}` : "";
-    dashboard.engineState.textContent = `${analysis.opponent_turn ? "Opponent" : "Best move"}: ${analysis.best_move_san || analysis.uci} · ${networkLabel}${contemptLabel ? ` · ${contemptLabel}` : ""}`;
+    dashboard.engineState.textContent = `${analysis.opponent_turn ? "Opponent" : "Best move"}: ${analysis.best_move_san || analysis.uci}${contemptLabel ? ` · ${contemptLabel}` : ""}`;
     if (dashboardState.lc0AutoContempt && Number.isSafeInteger(analysis.effective_contempt)) {
       dashboard.contemptSlider.value = String(analysis.effective_contempt);
       dashboard.contemptValue.textContent = `Auto ${analysis.effective_contempt >= 0 ? "+" : ""}${analysis.effective_contempt}`;
@@ -1405,6 +1422,8 @@
         }))
         .slice(0, 3),
       odds_mode: String(command.odds_mode || command.oddsMode || "none"),
+      odds_title: String(command.odds_title || command.oddsTitle || ""),
+      odds_reason: String(command.odds_reason || command.oddsReason || ""),
       effective_contempt: Number.isSafeInteger(command.effective_contempt) ? command.effective_contempt : Number.isSafeInteger(command.effectiveContempt) ? command.effectiveContempt : null,
       lc0_auto_network: command.lc0_auto_network === true || command.lc0AutoNetwork === true,
       lc0_auto_contempt: command.lc0_auto_contempt === true || command.lc0AutoContempt === true,

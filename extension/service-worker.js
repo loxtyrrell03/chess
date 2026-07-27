@@ -449,6 +449,8 @@ async function handleArrowCommand(message, clear = false) {
             pv: typeof variation.pv === "string" ? variation.pv.slice(0, 500) : ""
           })),
         odds_mode: typeof incoming.oddsMode === "string" ? incoming.oddsMode.slice(0, 32) : "none",
+        odds_title: typeof incoming.oddsTitle === "string" ? incoming.oddsTitle.slice(0, 120) : "",
+        odds_reason: typeof incoming.oddsReason === "string" ? incoming.oddsReason.slice(0, 400) : "",
         effective_contempt: Number.isSafeInteger(incoming.effectiveContempt) ? incoming.effectiveContempt : null,
         lc0_auto_network: incoming.lc0AutoNetwork === true,
         lc0_auto_contempt: incoming.lc0AutoContempt === true,

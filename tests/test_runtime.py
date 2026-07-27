@@ -194,6 +194,10 @@ async def test_manual_analysis_uses_arrow_instead_of_move_execution() -> None:
     assert bridge.messages[0]["timeMs"] == 250
     assert bridge.messages[0]["opponentTurn"] is True
     assert bridge.messages[0]["showOverlays"] is False
+    assert bridge.messages[0]["oddsTitle"] == "LCZero odds inactive"
+    assert bridge.messages[0]["oddsReason"] == (
+        "Stockfish is selected, so no LCZero odds network is in use."
+    )
 
 
 @pytest.mark.asyncio
@@ -549,6 +553,16 @@ async def test_compensation_recovery_switches_lqo_to_t1_then_bt4_while_queen_rem
         "queen_for_knight",
         "none",
     ]
+    assert [state["oddsTitle"] for state in states] == [
+        "LQO near-full queen",
+        "T1 queen-for-material",
+        "T1 queen-for-material",
+        "BT4 normal",
+    ]
+    assert "queen gap (9); no compensation; net -9" in states[0]["oddsReason"]
+    assert "queen gap (9); compensation: bishop (3); net -6" in states[1]["oddsReason"]
+    assert states[1]["oddsReason"] == states[2]["oddsReason"]
+    assert "queen gap (9); compensation: bishop and rook (8); net -1" in states[3]["oddsReason"]
     assert engine.selected_modes == ["queen", "queen_for_knight", "none"]
     assert scheduled_modes == ["queen", "queen_for_knight"]
     assert engine.cancel_calls >= 3
@@ -612,6 +626,9 @@ async def test_provisional_game_marker_frame_retains_confirmed_network_cache() -
 
     states = [message for message in bridge.messages if message["type"] == "dashboard.state"]
     assert [state["oddsMode"] for state in states] == ["queen", "queen"]
+    assert states[0]["oddsTitle"] == "LQO near-full queen"
+    assert states[1]["oddsTitle"] == states[0]["oddsTitle"]
+    assert states[1]["oddsReason"] == states[0]["oddsReason"]
     assert states[-1]["sync"] == "transient"
     assert engine.selected_modes == ["queen"]
     assert runtime._effective_odds_modes["live-odds-page"] == "queen"
@@ -703,6 +720,47 @@ def test_effective_odds_cache_is_isolated_per_page_and_ignores_provisional_value
         chess.WHITE,
         confirmed=False,
     ) == "none"
+    queen_title, queen_reason = runtime._odds_description_for("queen-page")
+    normal_title, normal_reason = runtime._odds_description_for("normal-page")
+    assert queen_title == "LQO near-full queen"
+    assert "queen gap (9); no compensation; net -9" in queen_reason
+    assert normal_title == "BT4 normal"
+    assert normal_reason.startswith("Material equal; net equal.")
+
+
+def test_odds_description_identifies_manual_and_stockfish_modes() -> None:
+    runtime = RuntimeController(
+        AppConfig(
+            engine_kind="lc0",
+            odds_mode="rook",
+            lc0_auto_network=False,
+        )
+    )
+
+    assert runtime._odds_description_for("manual-page") == (
+        "T1 rook-equivalent",
+        "Manual network selection; automatic material matching is off.",
+    )
+
+    runtime.config.engine_kind = "stockfish"
+    assert runtime._odds_description_for("manual-page") == (
+        "LCZero odds inactive",
+        "Stockfish is selected, so no LCZero odds network is in use.",
+    )
+
+
+def test_analysis_workspace_description_explains_normal_network() -> None:
+    runtime = RuntimeController(
+        AppConfig(engine_kind="lc0", lc0_auto_network=True)
+    )
+    runtime._decisions["analysis-page"] = classify_page(
+        "https://www.chess.com/analysis"
+    )
+
+    assert runtime._odds_description_for("analysis-page") == (
+        "BT4 normal",
+        "Analysis workspace has no player side; BT4 normal is used.",
+    )
 
 
 def test_confirmed_mode_change_logs_material_evidence(caplog: pytest.LogCaptureFixture) -> None:

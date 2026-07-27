@@ -27,6 +27,16 @@ QUEEN_ODDS_THRESHOLD_CP = 800
 MINOR_WITH_PAWN_COMPENSATION_THRESHOLD_CP = 200
 ROOK_WITH_PAWN_COMPENSATION_THRESHOLD_CP = 300
 
+ODDS_MODE_LABELS = {
+    "none": "BT4 normal",
+    "knight": "T1 minor-equivalent",
+    "rook": "T1 rook-equivalent",
+    "queen_for_knight": "T1 queen-for-material",
+    "queen": "LQO near-full queen",
+}
+
+_PIECE_NAMES = ("pawn", "knight", "bishop", "rook", "queen")
+
 
 @dataclass(frozen=True, slots=True)
 class MaterialAssessment:
@@ -160,6 +170,104 @@ def detect_odds_mode(board: chess.Board | None, player_color: chess.Color | None
 
     assessment = assess_material(board, player_color)
     return assessment.odds_mode if assessment is not None else "none"
+
+
+def odds_mode_label(odds_mode: str) -> str:
+    """Return the honest user-facing name of an available network family."""
+
+    return ODDS_MODE_LABELS.get(odds_mode, odds_mode.replace("_", " ").title())
+
+
+def explain_material_assessment(assessment: MaterialAssessment) -> str:
+    """Explain why an assessment maps to its coarse network family.
+
+    The explanation deliberately shows composition, compensation, and net
+    balance separately. A player who is missing a queen but has won two pawns
+    back can therefore see both the nine-point gross gap and the resulting
+    seven-point net deficit instead of receiving an ambiguous tier label.
+    """
+
+    gaps = _piece_count_differences(
+        assessment.player_counts,
+        assessment.opponent_counts,
+    )
+    compensation = _piece_count_differences(
+        assessment.opponent_counts,
+        assessment.player_counts,
+    )
+    balance = _format_balance(assessment.balance_cp)
+
+    if gaps:
+        gap_word = "gap" if len(gaps) == 1 else "gaps"
+        composition = (
+            f"{_join_phrases(gaps)} {gap_word} "
+            f"({_format_points(assessment.gross_deficit_cp)})"
+        )
+        if compensation:
+            composition += (
+                f"; compensation: {_join_phrases(compensation)} "
+                f"({_format_points(assessment.compensation_cp)})"
+            )
+        else:
+            composition += "; no compensation"
+    elif compensation:
+        composition = (
+            f"Ahead by {_join_phrases(compensation)} "
+            f"({_format_points(assessment.compensation_cp)})"
+        )
+    else:
+        composition = "Material equal"
+
+    rationale = {
+        "none": "BT4 matches this ordinary or sufficiently compensated imbalance.",
+        "knight": "T1 is the closest available minor-equivalent odds family.",
+        "rook": "T1 is the closest available rook-equivalent odds family.",
+        "queen_for_knight": "T1 is the closest available intermediate odds family.",
+        "queen": "LQO is the closest available near-full-queen odds family.",
+    }.get(assessment.odds_mode, "This is the closest available network family.")
+    return f"{composition}; {balance}. {rationale}"
+
+
+def _piece_count_differences(
+    lower_counts: tuple[int, int, int, int, int],
+    higher_counts: tuple[int, int, int, int, int],
+) -> tuple[str, ...]:
+    phrases: list[str] = []
+    for lower, higher, piece_name in zip(
+        lower_counts,
+        higher_counts,
+        _PIECE_NAMES,
+        strict=True,
+    ):
+        difference = max(0, higher - lower)
+        if difference:
+            phrases.append(
+                piece_name
+                if difference == 1
+                else f"{difference} {piece_name}s"
+            )
+    return tuple(phrases)
+
+
+def _join_phrases(phrases: tuple[str, ...]) -> str:
+    if len(phrases) <= 1:
+        return phrases[0] if phrases else ""
+    if len(phrases) == 2:
+        return f"{phrases[0]} and {phrases[1]}"
+    return f"{', '.join(phrases[:-1])}, and {phrases[-1]}"
+
+
+def _format_balance(balance_cp: int) -> str:
+    points = _format_points(abs(balance_cp))
+    if balance_cp < 0:
+        return f"net -{points}"
+    if balance_cp > 0:
+        return f"net +{points}"
+    return "net equal"
+
+
+def _format_points(value_cp: int) -> str:
+    return str(value_cp // 100)
 
 
 def _mode_for_material(

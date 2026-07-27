@@ -15,7 +15,12 @@ from .bridge import BridgeServer
 from .config import AppConfig
 from .engine import StockfishError, StockfishService
 from .events import AppEvent
-from .material import assess_material
+from .material import (
+    MaterialAssessment,
+    assess_material,
+    explain_material_assessment,
+    odds_mode_label,
+)
 from .models import AnalysisResult, Orientation, Snapshot, SyncState
 from .policy import PageMode, PolicyDecision, classify_page, site_label
 from .reconcile import GameReconciler, piece_map
@@ -51,6 +56,7 @@ class RuntimeController:
         self._analysis_tasks: dict[str, asyncio.Task[None]] = {}
         self._analysed_revision: dict[str, tuple[int, str, str]] = {}
         self._effective_odds_modes: dict[str, str] = {}
+        self._material_assessments: dict[str, MaterialAssessment] = {}
         self._sync_states: dict[str, SyncState] = {}
         self._active_page: str | None = None
 
@@ -172,6 +178,7 @@ class RuntimeController:
         self._sync_states[snapshot.page_id] = effective_sync_state
         if transition.new_game and not transition.provisional:
             self._effective_odds_modes.pop(snapshot.page_id, None)
+            self._material_assessments.pop(snapshot.page_id, None)
         reconciled_moves = _san_history(transition.board) if transition.board else ()
         # Some renderers expose only the initially hydrated move list while
         # their live board continues updating. Prefer the reconciler's legal
@@ -201,6 +208,7 @@ class RuntimeController:
             player_color,
             confirmed=effective_sync_state is SyncState.SYNCHRONIZED,
         )
+        odds_title, odds_reason = self._odds_description_for(snapshot.page_id)
         self._emit(
             "position",
             transition.message or transition.state.value,
@@ -239,6 +247,8 @@ class RuntimeController:
                     "engineName": getattr(self._engine, "name", "Stockfish 18"),
                     "multiPv": self.config.multi_pv,
                     "oddsMode": effective_odds_mode,
+                    "oddsTitle": odds_title,
+                    "oddsReason": odds_reason,
                     "lc0Contempt": self.config.lc0_contempt,
                     "lc0AutoNetwork": self.config.lc0_auto_network,
                     "lc0AutoContempt": self.config.lc0_auto_contempt,
@@ -339,6 +349,10 @@ class RuntimeController:
         effective = assessment.odds_mode if assessment is not None else "none"
         previous = self._effective_odds_modes.get(page_id)
         self._effective_odds_modes[page_id] = effective
+        if assessment is None:
+            self._material_assessments.pop(page_id, None)
+        else:
+            self._material_assessments[page_id] = assessment
         if previous != effective and assessment is not None:
             LOGGER.info(
                 "Automatic LCZero material mode: page=%s %s -> %s family=%s "
@@ -355,6 +369,40 @@ class RuntimeController:
                 assessment.opponent_counts,
             )
         return effective
+
+    def _odds_description_for(self, page_id: str) -> tuple[str, str]:
+        """Return dashboard copy that matches the exact effective mode."""
+
+        if self.config.engine_kind != "lc0":
+            return (
+                "LCZero odds inactive",
+                "Stockfish is selected, so no LCZero odds network is in use.",
+            )
+        effective_mode = self._effective_odds_modes.get(
+            page_id,
+            self.config.odds_mode,
+        )
+        if not self.config.lc0_auto_network:
+            return (
+                odds_mode_label(effective_mode),
+                "Manual network selection; automatic material matching is off.",
+            )
+        assessment = self._material_assessments.get(page_id)
+        if assessment is None:
+            decision = self._decisions.get(page_id)
+            if decision is not None and decision.mode is PageMode.ANALYSIS:
+                return (
+                    odds_mode_label(effective_mode),
+                    "Analysis workspace has no player side; BT4 normal is used.",
+                )
+            return (
+                odds_mode_label(effective_mode),
+                "Waiting for a synchronized position with a known player side.",
+            )
+        return (
+            odds_mode_label(assessment.odds_mode),
+            explain_material_assessment(assessment),
+        )
 
     def _cancel_page_analysis(self, page_id: str) -> None:
         task = self._analysis_tasks.get(page_id)
@@ -521,6 +569,7 @@ class RuntimeController:
         client = self._clients.get(page_id)
         if not client or not self._bridge:
             return
+        odds_title, odds_reason = self._odds_description_for(page_id)
         await self._bridge.send(
             client,
             {
@@ -573,6 +622,8 @@ class RuntimeController:
                     page_id,
                     self.config.odds_mode,
                 ),
+                "oddsTitle": odds_title,
+                "oddsReason": odds_reason,
                 "effectiveContempt": result.effective_contempt,
                 "lc0AutoNetwork": self.config.lc0_auto_network,
                 "lc0AutoContempt": self.config.lc0_auto_contempt,
@@ -710,6 +761,7 @@ class RuntimeController:
             self._trackers.pop(page_id, None)
             self._analysed_revision.pop(page_id, None)
             self._effective_odds_modes.pop(page_id, None)
+            self._material_assessments.pop(page_id, None)
             self._sync_states.pop(page_id, None)
             client = self._clients.get(page_id)
             if client and self._bridge:
@@ -823,6 +875,7 @@ class RuntimeController:
             self.config.lc0_auto_contempt = lc0_auto_contempt
         if engine_kind is not None or odds_mode is not None or lc0_auto_network is not None:
             self._effective_odds_modes.clear()
+            self._material_assessments.clear()
         self.config.save()
         try:
             name = await asyncio.to_thread(self._engine.start)

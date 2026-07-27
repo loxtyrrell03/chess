@@ -3,7 +3,12 @@ from __future__ import annotations
 import chess
 import pytest
 
-from chess_trainer.material import assess_material, detect_odds_mode
+from chess_trainer.material import (
+    assess_material,
+    detect_odds_mode,
+    explain_material_assessment,
+    odds_mode_label,
+)
 
 
 FULL = "PPPPPPPPNNBBRRQ"
@@ -120,6 +125,91 @@ def test_assessment_exposes_gross_loss_and_exchange_compensation() -> None:
     assert minor_assessment.compensation_cp == 100
     assert minor_assessment.minor_count_deficit == 1
     assert minor_assessment.odds_mode == "knight"
+
+
+@pytest.mark.parametrize(
+    ("case", "player_pieces", "opponent_pieces", "title", "reason"),
+    [
+        (
+            "equal",
+            FULL,
+            FULL,
+            "BT4 normal",
+            "Material equal; net equal. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "two pawns down",
+            without(FULL, "PP"),
+            FULL,
+            "BT4 normal",
+            "2 pawns gap (2); no compensation; net -2. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "exchange down",
+            without(FULL, "R"),
+            without(FULL, "N"),
+            "BT4 normal",
+            "rook gap (5); compensation: knight (3); net -2. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "bishop down",
+            without(FULL, "B"),
+            FULL,
+            "T1 minor-equivalent",
+            "bishop gap (3); no compensation; net -3. T1 is the closest available minor-equivalent odds family.",
+        ),
+        (
+            "rook down",
+            without(FULL, "R"),
+            FULL,
+            "T1 rook-equivalent",
+            "rook gap (5); no compensation; net -5. T1 is the closest available rook-equivalent odds family.",
+        ),
+        (
+            "queen for two pawns",
+            without(FULL, "Q"),
+            without(FULL, "PP"),
+            "T1 queen-for-material",
+            "queen gap (9); compensation: 2 pawns (2); net -7. T1 is the closest available intermediate odds family.",
+        ),
+        (
+            "queen for one pawn",
+            without(FULL, "Q"),
+            without(FULL, "P"),
+            "LQO near-full queen",
+            "queen gap (9); compensation: pawn (1); net -8. LQO is the closest available near-full-queen odds family.",
+        ),
+        (
+            "opponent queen loss",
+            FULL,
+            without(FULL, "Q"),
+            "BT4 normal",
+            "Ahead by queen (9); net +9. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "multiple gaps and compensation",
+            without(FULL, "QR"),
+            without(FULL, "BP"),
+            "T1 queen-for-material",
+            "rook and queen gaps (14); compensation: pawn and bishop (4); net -10. T1 is the closest available intermediate odds family.",
+        ),
+    ],
+)
+def test_material_explanations_name_composition_compensation_and_network(
+    case: str,
+    player_pieces: str,
+    opponent_pieces: str,
+    title: str,
+    reason: str,
+) -> None:
+    assessment = assess_material(
+        material_board(player_pieces, opponent_pieces, chess.WHITE),
+        chess.WHITE,
+    )
+
+    assert assessment is not None, case
+    assert odds_mode_label(assessment.odds_mode) == title, case
+    assert explain_material_assessment(assessment) == reason, case
 
 
 def test_live_material_reversal_is_stateless_and_player_relative() -> None:
