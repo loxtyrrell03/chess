@@ -897,7 +897,7 @@
         .moves{height:150px;overflow:auto;font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;background:rgba(0,0,0,.2);border:1px solid rgba(255,255,255,.07);border-radius:5px;padding:6px 7px;color:#d0d5dc;scrollbar-width:thin}.move-row{display:grid;grid-template-columns:24px 1fr 1fr;gap:4px;padding:1px 0}.move-no{color:#777f89}.empty-moves{color:#777f89;padding:5px 2px}
         .engine{margin-top:10px;border:1px solid rgba(255,255,255,.11);border-radius:7px;background:rgba(10,11,14,.26);overflow:hidden}.engine-head{display:flex;align-items:center;gap:7px;min-height:34px;padding:6px 8px;border-bottom:1px solid rgba(255,255,255,.08)}.engine-mark{width:4px;align-self:stretch;border-radius:4px;background:#2f6fad}.engine-name{font-weight:750}.engine-state{min-width:0;flex:1;color:#929aa5;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.eval-badge{font:750 13px/1 ui-monospace,SFMono-Regular,Consolas,monospace;padding:4px 7px;border-radius:5px;background:rgba(255,255,255,.08)}
         .metrics{display:grid;grid-template-columns:repeat(5,1fr);padding:7px 6px 6px}.metric{text-align:center;border-right:1px solid rgba(255,255,255,.07)}.metric:last-child{border-right:0}.metric-label{display:block;color:#7f8791;font-size:9px;font-weight:700;letter-spacing:.45px;text-transform:uppercase}.metric-value{display:block;margin-top:2px;color:#e7eaf0;font:700 11px/1.2 ui-monospace,SFMono-Regular,Consolas,monospace}
-        .line{display:grid;grid-template-columns:auto minmax(0,1fr);gap:7px;align-items:baseline;margin:0 7px 7px;padding:6px 7px;border-radius:5px;background:rgba(255,255,255,.045)}.line-score{min-width:43px;color:#e6e9ed;font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace}.pv{min-width:0;color:#aeb5bf;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .engine-lines-head{display:flex;align-items:center;justify-content:space-between;padding:6px 8px 5px;border-top:1px solid rgba(255,255,255,.07);color:#7f8791;font-size:9px;font-weight:750;letter-spacing:.45px;text-transform:uppercase}.lines-control{display:flex;align-items:center;gap:5px}.lines-control select{border:1px solid rgba(255,255,255,.12);border-radius:4px;background:#25272c;color:#e9edf2;padding:2px 18px 2px 5px;font:700 10px "Segoe UI",sans-serif}.engine-lines{display:grid;gap:4px;padding:0 7px 7px}.line{display:grid;grid-template-columns:17px 43px minmax(0,1fr);gap:6px;align-items:baseline;padding:6px 7px;border-radius:5px;background:rgba(255,255,255,.045)}.line:first-child{background:rgba(47,111,173,.13);box-shadow:inset 2px 0 #2f6fad}.line-rank{color:#69727e;font:750 9px ui-monospace,SFMono-Regular,Consolas,monospace}.line-score{color:#e6e9ed;font:700 11px ui-monospace,SFMono-Regular,Consolas,monospace}.pv{min-width:0;color:#aeb5bf;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .settings{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:9px;padding:8px;border:1px solid rgba(255,255,255,.1);border-radius:7px;background:rgba(10,11,14,.2)}.field{display:grid;gap:3px}.field>span,.contempt-head{color:#8f97a2;font-size:9px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}.field select{width:100%;border:1px solid rgba(255,255,255,.13);border-radius:4px;background:#292b30;color:#edf0f4;padding:5px;font:600 11px "Segoe UI",sans-serif}.contempt{grid-column:1/-1}.contempt-head{display:flex;justify-content:space-between}.contempt-value{color:#dce6f2;font:700 10px ui-monospace,SFMono-Regular,Consolas,monospace}.contempt input{width:100%;accent-color:#2f6fad}.checks{grid-column:1/-1;display:grid;grid-template-columns:1fr 1fr;gap:5px}.check{display:flex;align-items:center;gap:5px;color:#b7bec8;font-size:10px;cursor:pointer}.check input{accent-color:#2f6fad}.hint{grid-column:1/-1;color:#777f89;font-size:9px;line-height:1.3}
         .buttons{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:9px}.buttons button{min-width:0;border:1px solid rgba(255,255,255,.13);border-radius:5px;background:rgba(255,255,255,.065);color:#e5e8ec;padding:6px 4px;font:650 11px "Segoe UI",sans-serif;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.buttons button:hover{border-color:#2f6fad;color:#fff}.buttons button.on{background:rgba(47,111,173,.28);border-color:#2f6fad;color:#dbeeff}
       </style>
@@ -915,11 +915,11 @@
               <div class="metric"><span class="metric-label">NPS</span><span class="metric-value nps">—</span></div>
               <div class="metric"><span class="metric-label">Time</span><span class="metric-value time">—</span></div>
             </div>
-            <div class="line"><span class="line-score">PV</span><span class="pv">Principal variation will appear here</span></div>
+            <div class="engine-lines-head"><span>Principal variations</span><label class="lines-control"><span>Lines</span><select class="multipv-select"><option value="1">1</option><option value="2">2</option><option value="3">3</option></select></label></div>
+            <div class="engine-lines"><div class="line"><span class="line-rank">#1</span><span class="line-score">—</span><span class="pv">Waiting for engine analysis</span></div></div>
           </section>
           <section class="settings">
             <label class="field"><span>Engine</span><select class="engine-select"><option value="stockfish">Stockfish 18</option><option value="lc0">LCZero 0.32.1</option></select></label>
-            <label class="field"><span>Arrows</span><select class="multipv-select"><option value="1">1 best move</option><option value="2">2 best moves</option><option value="3">3 best moves</option></select></label>
             <label class="field"><span>Odds network</span><select class="odds-select"><option value="none">None (BT4)</option><option value="knight">Knight odds</option><option value="rook">Rook odds</option><option value="queen_for_knight">Queen for knight</option><option value="queen">Queen odds (LQO)</option></select></label>
             <label class="field contempt"><span class="contempt-head"><span>LC0 contempt</span><output class="contempt-value">0</output></span><input class="contempt-slider" type="range" min="-1000" max="1000" step="25" value="0"></label>
             <div class="checks"><label class="check"><input class="auto-network" type="checkbox">Auto network</label><label class="check"><input class="auto-contempt" type="checkbox">Auto contempt</label><label class="check"><input class="analyze-opponent" type="checkbox">Analyze opponent</label><label class="check"><input class="opponent-arrows" type="checkbox">Opponent arrows</label></div>
@@ -993,7 +993,7 @@
       engineState: shadow.querySelector(".engine-state"), evalBadge: shadow.querySelector(".eval-badge"),
       metricEval: shadow.querySelector(".metric-eval"), depth: shadow.querySelector(".depth"),
       nodes: shadow.querySelector(".nodes"), nps: shadow.querySelector(".nps"), time: shadow.querySelector(".time"),
-      board: shadow.querySelector(".board"), moves: shadow.querySelector(".moves"), pv: shadow.querySelector(".pv"),
+      board: shadow.querySelector(".board"), moves: shadow.querySelector(".moves"), engineLines: shadow.querySelector(".engine-lines"),
       monitor: shadow.querySelector('[data-action="monitoring"]'), overlays: shadow.querySelector('[data-action="overlays"]'),
       engineName: shadow.querySelector(".engine-name"), engineSelect: shadow.querySelector(".engine-select"), multiPvSelect: shadow.querySelector(".multipv-select"),
       oddsSelect: shadow.querySelector(".odds-select"), contemptSlider: shadow.querySelector(".contempt-slider"),
@@ -1154,7 +1154,7 @@
       dashboard.nodes.textContent = "—";
       dashboard.nps.textContent = "—";
       dashboard.time.textContent = "—";
-      dashboard.pv.textContent = "Principal variation will appear here";
+      renderDashboardVariations(null);
       return;
     }
     if (analysis.engine_name) dashboard.engineName.textContent = analysis.engine_name;
@@ -1177,8 +1177,7 @@
     dashboard.nodes.textContent = formatEngineCount(analysis.nodes);
     dashboard.nps.textContent = Number.isFinite(analysis.nps) ? `${formatEngineCount(analysis.nps)}/s` : "—";
     dashboard.time.textContent = formatEngineTime(analysis.time_ms);
-    dashboard.pv.textContent = analysis.pv || "Principal variation will appear here";
-    dashboard.pv.title = analysis.pv || "";
+    renderDashboardVariations(analysis);
   }
 
   function renderDashboardBoard(fen, orientation) {
@@ -1335,6 +1334,44 @@
     scheduleScan();
   }
 
+  function renderDashboardVariations(analysis) {
+    if (!dashboard?.engineLines) return;
+    const variations = analysis
+      ? (analysis.variations.length
+          ? analysis.variations
+          : [{
+              rank: 1,
+              uci: analysis.uci,
+              evaluation: analysis.evaluation,
+              pv: analysis.pv
+            }])
+      : [];
+    dashboard.engineLines.replaceChildren();
+    if (!variations.length) {
+      const row = document.createElement("div");
+      row.className = "line";
+      row.innerHTML = '<span class="line-rank">#1</span><span class="line-score">—</span><span class="pv">Waiting for engine analysis</span>';
+      dashboard.engineLines.appendChild(row);
+      return;
+    }
+    for (const variation of variations.slice(0, dashboardState.multiPv || 1)) {
+      const row = document.createElement("div");
+      row.className = "line";
+      const rank = document.createElement("span");
+      rank.className = "line-rank";
+      rank.textContent = `#${variation.rank}`;
+      const score = document.createElement("span");
+      score.className = "line-score";
+      score.textContent = variation.evaluation || (variation.rank === 1 ? analysis.evaluation : "—");
+      const pv = document.createElement("span");
+      pv.className = "pv";
+      pv.textContent = variation.pv || (variation.rank === 1 ? analysis.pv : variation.uci) || "Waiting for line";
+      pv.title = pv.textContent;
+      row.append(rank, score, pv);
+      dashboard.engineLines.appendChild(row);
+    }
+  }
+
   function showBestMoveArrow(command) {
     if (!isPlainObject(command) || !currentSnapshot || !currentBoard?.isConnected) return;
     const normalized = {
@@ -1362,7 +1399,9 @@
           uci: String(variation.uci).toLowerCase(),
           score_cp: Number.isFinite(variation.score_cp) ? variation.score_cp : null,
           mate: Number.isSafeInteger(variation.mate) ? variation.mate : null,
-          depth: Number.isSafeInteger(variation.depth) ? variation.depth : null
+          depth: Number.isSafeInteger(variation.depth) ? variation.depth : null,
+          evaluation: String(variation.evaluation || "—"),
+          pv: String(variation.pv || "")
         }))
         .slice(0, 3),
       odds_mode: String(command.odds_mode || command.oddsMode || "none"),
@@ -1414,7 +1453,7 @@
       const from = squareCenter(variation.uci.slice(0, 2), currentBoard, currentSnapshot.board.orientation);
       const to = squareCenter(variation.uci.slice(2, 4), currentBoard, currentSnapshot.board.orientation);
       if (!from || !to) continue;
-      const opacity = index === 0 ? 0.72 : index === 1 ? 0.42 : 0.27;
+      const opacity = index === 0 ? 0.72 : index === 1 ? 0.38 : 0.24;
       const markerId = `chess-trainer-best-move-head-${index}`;
       const marker = document.createElementNS("http://www.w3.org/2000/svg", "marker");
       marker.setAttribute("id", markerId);
@@ -1428,7 +1467,6 @@
       const head = document.createElementNS("http://www.w3.org/2000/svg", "path");
       head.setAttribute("d", "M0,0 V4 L3,2 Z");
       head.setAttribute("fill", "#2f6fad");
-      head.setAttribute("opacity", String(opacity));
       marker.appendChild(head);
       defs.appendChild(marker);
 
@@ -1442,7 +1480,12 @@
       line.setAttribute("x2", String(to.x - rect.left - Math.cos(angle) * arrowMargin));
       line.setAttribute("y2", String(to.y - rect.top - Math.sin(angle) * arrowMargin));
       line.setAttribute("stroke", "#2f6fad");
-      line.setAttribute("stroke-width", String(rect.width * variation.brushWidth / 512));
+      line.setAttribute(
+        "stroke-width",
+        String(index === 0
+          ? Math.max(6, rect.width * 14 / 512)
+          : Math.max(3, rect.width * variation.brushWidth / 512))
+      );
       line.setAttribute("stroke-linecap", "round");
       line.setAttribute("opacity", String(opacity));
       line.setAttribute("marker-end", `url(#${markerId})`);
@@ -1459,15 +1502,11 @@
       .filter((variation) => /^[a-h][1-8][a-h][1-8][qrbn]?$/.test(variation.uci))
       .sort((left, right) => left.rank - right.rank);
     if (!sorted.length) return [];
-    const bestWinChance = engineWinChance(sorted[0]);
-    const seen = new Set();
     const visible = [];
+    const bestWinChance = engineWinChance(sorted[0]);
     for (const variation of sorted) {
-      if (seen.has(variation.uci)) continue;
       const winChance = engineWinChance(variation);
       const winChanceDrop = bestWinChance === null || winChance === null ? (variation.rank - 1) * 2.5 : bestWinChance - winChance;
-      if (winChanceDrop >= 10) continue;
-      seen.add(variation.uci);
       visible.push({
         ...variation,
         brushWidth: winChanceDrop < 2.5 ? 11 : winChanceDrop < 5 ? 7.5 : 4

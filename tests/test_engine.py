@@ -64,7 +64,7 @@ def test_multipv_is_clamped_to_supported_arrow_count(requested: int, expected: i
     assert config.multi_pv == expected
 
 
-def test_analysis_variations_are_ranked_and_root_move_unique() -> None:
+def test_analysis_variations_preserve_every_rank_in_order() -> None:
     board = chess.Board()
 
     def result(uci: str, score: int) -> AnalysisResult:
@@ -90,6 +90,7 @@ def test_analysis_variations_are_ranked_and_root_move_unique() -> None:
 
     assert [(item.rank, item.best_move.uci()) for item in variations] == [
         (1, "e2e4"),
+        (2, "e2e4"),
         (3, "g1f3"),
     ]
 
@@ -294,5 +295,34 @@ def test_continuous_analysis_publishes_before_cancellation() -> None:
         assert results
         assert results[0].revision == 7
         assert results[0].best_move in chess.Board().legal_moves
+    finally:
+        engine.stop()
+
+
+@pytest.mark.skipif(not default_engine_path().exists(), reason="Stockfish 18 is not installed")
+def test_continuous_multipv_publishes_three_full_engine_lines() -> None:
+    config = AppConfig(
+        engine_path=str(default_engine_path()),
+        threads=2,
+        hash_mb=64,
+        multi_pv=3,
+    )
+    engine = StockfishService(config)
+    complete = []
+    published_counts: list[int] = []
+
+    def publish(result: AnalysisResult) -> None:
+        published_counts.append(len(result.variations))
+        if len(result.variations) == 3 and all(line.pv_uci and line.pv_san for line in result.variations):
+            complete.append(result)
+            engine.cancel()
+
+    try:
+        engine.start()
+        engine.analyse_continuously(chess.Board(), revision=11, publish=publish)
+        assert complete
+        assert set(published_counts) == {3}
+        assert [line.rank for line in complete[-1].variations] == [1, 2, 3]
+        assert len({line.best_move for line in complete[-1].variations}) == 3
     finally:
         engine.stop()

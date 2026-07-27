@@ -156,9 +156,9 @@ async def test_multipv_variations_are_published_for_multiple_arrows() -> None:
 
     assert bridge.messages[0]["multiPv"] == 3
     assert bridge.messages[0]["variations"] == [
-        {"rank": 1, "uci": "e2e4", "scoreCp": 35, "mate": None, "depth": 16},
-        {"rank": 2, "uci": "d2d4", "scoreCp": 20, "mate": None, "depth": 16},
-        {"rank": 3, "uci": "g1f3", "scoreCp": 5, "mate": None, "depth": 15},
+        {"rank": 1, "uci": "e2e4", "scoreCp": 35, "mate": None, "depth": 16, "evaluation": "+0.35", "pv": ""},
+        {"rank": 2, "uci": "d2d4", "scoreCp": 20, "mate": None, "depth": 16, "evaluation": "+0.20", "pv": ""},
+        {"rank": 3, "uci": "g1f3", "scoreCp": 5, "mate": None, "depth": 15, "evaluation": "+0.05", "pv": ""},
     ]
 
 

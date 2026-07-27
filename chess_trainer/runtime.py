@@ -464,6 +464,8 @@ class RuntimeController:
                         "scoreCp": variation.score_cp,
                         "mate": variation.mate,
                         "depth": variation.depth,
+                        "evaluation": _white_score_text(variation.score_cp, variation.mate, board),
+                        "pv": " ".join(variation.pv_san),
                     }
                     for variation in result.variations
                 ] or [{
@@ -472,6 +474,8 @@ class RuntimeController:
                     "scoreCp": result.score_cp,
                     "mate": result.mate,
                     "depth": result.depth,
+                    "evaluation": _white_evaluation_text(result, board),
+                    "pv": " ".join(result.pv_san),
                 }],
                 "oddsMode": result.odds_mode or self.config.odds_mode,
                 "effectiveContempt": result.effective_contempt,
@@ -766,9 +770,13 @@ def _evaluation_text(result: AnalysisResult) -> str:
 
 
 def _white_evaluation_text(result: AnalysisResult, board: chess.Board) -> str:
+    return _white_score_text(result.score_cp, result.mate, board)
+
+
+def _white_score_text(score_cp: int | None, mate: int | None, board: chess.Board) -> str:
     direction = 1 if board.turn == chess.WHITE else -1
-    if result.mate is not None:
-        return f"Mate {direction * result.mate:+d}"
-    if result.score_cp is not None:
-        return f"{direction * result.score_cp / 100:+.2f}"
+    if mate is not None:
+        return f"Mate {direction * mate:+d}"
+    if score_cp is not None:
+        return f"{direction * score_cp / 100:+.2f}"
     return "—"

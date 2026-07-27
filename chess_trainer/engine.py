@@ -529,7 +529,7 @@ class StockfishService:
                         rank = 1
                     latest_variations[rank] = result
                     primary = latest_variations.get(1)
-                    if primary is None:
+                    if primary is None or len(latest_variations) < self.config.multi_pv:
                         continue
                     result = replace(
                         primary,
@@ -753,19 +753,17 @@ def _result_from_info(board: chess.Board, revision: int, info: dict[str, object]
 
 
 def _analysis_variations(results: dict[int, AnalysisResult]) -> tuple[AnalysisVariation, ...]:
-    """Return ordered, root-move-unique MultiPV lines for the current search."""
+    """Return every requested MultiPV line in engine rank order."""
 
     variations: list[AnalysisVariation] = []
-    seen_moves: set[chess.Move] = set()
     for rank, result in sorted(results.items()):
-        if result.best_move in seen_moves:
-            continue
-        seen_moves.add(result.best_move)
         variations.append(AnalysisVariation(
             rank=rank,
             best_move=result.best_move,
             score_cp=result.score_cp,
             mate=result.mate,
             depth=result.depth,
+            pv_uci=result.pv_uci,
+            pv_san=result.pv_san,
         ))
     return tuple(variations)

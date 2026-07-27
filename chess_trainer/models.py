@@ -152,6 +152,8 @@ class AnalysisVariation:
     score_cp: int | None
     mate: int | None
     depth: int | None
+    pv_uci: tuple[str, ...] = ()
+    pv_san: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

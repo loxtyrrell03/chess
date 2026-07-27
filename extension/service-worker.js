@@ -444,7 +444,9 @@ async function handleArrowCommand(message, clear = false) {
             uci: variation.uci.toLowerCase(),
             score_cp: Number.isFinite(variation.scoreCp) ? Math.max(-100000, Math.min(100000, variation.scoreCp)) : null,
             mate: Number.isSafeInteger(variation.mate) ? variation.mate : null,
-            depth: Number.isSafeInteger(variation.depth) ? variation.depth : null
+            depth: Number.isSafeInteger(variation.depth) ? variation.depth : null,
+            evaluation: typeof variation.evaluation === "string" ? variation.evaluation.slice(0, 24) : "—",
+            pv: typeof variation.pv === "string" ? variation.pv.slice(0, 500) : ""
           })),
         odds_mode: typeof incoming.oddsMode === "string" ? incoming.oddsMode.slice(0, 32) : "none",
         effective_contempt: Number.isSafeInteger(incoming.effectiveContempt) ? incoming.effectiveContempt : null,
