@@ -15,7 +15,7 @@ from .bridge import BridgeServer
 from .config import AppConfig
 from .engine import StockfishError, StockfishService
 from .events import AppEvent
-from .material import detect_odds_mode
+from .material import assess_material
 from .models import AnalysisResult, Orientation, Snapshot, SyncState
 from .policy import PageMode, PolicyDecision, classify_page, site_label
 from .reconcile import GameReconciler, piece_map
@@ -170,7 +170,7 @@ class RuntimeController:
         transition = tracker.ingest(snapshot)
         effective_sync_state = SyncState.TRANSIENT if transition.provisional else transition.state
         self._sync_states[snapshot.page_id] = effective_sync_state
-        if transition.new_game:
+        if transition.new_game and not transition.provisional:
             self._effective_odds_modes.pop(snapshot.page_id, None)
         reconciled_moves = _san_history(transition.board) if transition.board else ()
         # Some renderers expose only the initially hydrated move list while
@@ -194,6 +194,7 @@ class RuntimeController:
             self._engine.set_player_color(player_color)
         orientation = snapshot.orientation.value.title()
         player_text = chess.COLOR_NAMES[player_color].title() if player_color is not None else "Unknown"
+        previous_odds_mode = self._effective_odds_modes.get(snapshot.page_id)
         effective_odds_mode = self._effective_odds_mode_for(
             snapshot.page_id,
             transition.board,
@@ -252,6 +253,35 @@ class RuntimeController:
             await asyncio.to_thread(self._engine.new_game)
             self._emit("game", f"New {site} session detected")
 
+        network_changed = (
+            self.config.engine_kind == "lc0"
+            and self.config.lc0_auto_network
+            and effective_sync_state is SyncState.SYNCHRONIZED
+            and transition.board is not None
+            and previous_odds_mode != effective_odds_mode
+        )
+        if (
+            network_changed
+            and self.config.monitoring
+            and decision.can_analyze
+            and snapshot.page_id == self._active_page
+            and snapshot.visible
+            and snapshot.focused
+            and (player_color is not None or analysis_workspace)
+        ):
+            # Invalidate the search and select the correct warmed process even
+            # when this position is not otherwise analyzed (normally because
+            # the material changed on the player's move).
+            self._cancel_page_analysis(snapshot.page_id)
+            try:
+                await asyncio.to_thread(
+                    self._engine.select_network,
+                    transition.board.copy(stack=True),
+                    effective_odds_mode,
+                )
+            except StockfishError as exc:
+                self._emit("error", str(exc))
+
         if not self.config.monitoring or not decision.can_analyze:
             return
         if transition.provisional:
@@ -305,8 +335,25 @@ class RuntimeController:
             return self.config.odds_mode
         if not confirmed:
             return self._effective_odds_modes.get(page_id, "none")
-        effective = detect_odds_mode(board, player_color)
+        assessment = assess_material(board, player_color)
+        effective = assessment.odds_mode if assessment is not None else "none"
+        previous = self._effective_odds_modes.get(page_id)
         self._effective_odds_modes[page_id] = effective
+        if previous != effective and assessment is not None:
+            LOGGER.info(
+                "Automatic LCZero material mode: page=%s %s -> %s family=%s "
+                "balance_cp=%+d gross_deficit_cp=%d compensation_cp=%d "
+                "player_counts=%s opponent_counts=%s",
+                page_id,
+                previous or "unset",
+                effective,
+                assessment.network_family,
+                assessment.balance_cp,
+                assessment.gross_deficit_cp,
+                assessment.compensation_cp,
+                assessment.player_counts,
+                assessment.opponent_counts,
+            )
         return effective
 
     def _cancel_page_analysis(self, page_id: str) -> None:

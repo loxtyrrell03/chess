@@ -55,34 +55,42 @@ The engine keeps refining the current position until the board changes. MultiPV 
 
 ### Automatic LCZero network mapping
 
-Automatic selection measures the human player's **net physical material deficit**
-from the live piece counts using conventional values (pawn 1, knight/bishop 3,
-rook 5, queen 9). Material captured from the opponent is compensation, so equal
-trades, being ahead, being down one or two pawns, and being down only the
-exchange remain on normal BT4. The available networks are deliberately treated
-as coarse handicap bands:
+Automatic selection measures the human player's physical material from the live
+piece counts using conventional values (pawn 1, knight/bishop 3, rook 5, queen
+9). It combines **net deficit** with unmatched piece counts. Material captured
+from the opponent is compensation, so equal trades, being ahead, being down one
+or two pawns, and being down only the exchange remain on normal BT4. Composition
+prevents an endgame with one fewer minor and only one extra pawn from being
+misreported as normal. The available networks are deliberately treated as
+coarse handicap families:
 
-| Player-relative net deficit | Dashboard mode | LCZero network |
+| Confirmed player-relative material | Dashboard mode | LCZero network |
 | --- | --- | --- |
-| Less than 3 points | Normal | BT4 |
-| 3 to less than 5 | Minor-equivalent (`knight`) | T1 odds |
-| 5 to less than 6 | Rook-equivalent (`rook`) | T1 odds |
-| 6 to less than 8 | Queen-for-minor equivalent (`queen_for_knight`) | T1 odds |
-| 8 or more, with a genuine queen-count deficit | Near-full queen odds (`queen`) | LQO v2 |
-| 8 or more without a queen-count deficit | Highest T1 equivalent (`queen_for_knight`) | T1 odds |
+| Ahead/equal, 1-2 pawns down, an exchange down, or under a full minor-equivalent after compensation | Normal | BT4 |
+| Net deficit of 3 to under 5; also one unmatched minor with no more than one pawn of compensation | Minor-equivalent (`knight`) | T1 odds |
+| Net deficit of 5 to under 6; also one unmatched rook with only pawn compensation and at least 3 points still owed | Rook-equivalent (`rook`) | T1 odds |
+| Net deficit of 6 or more without a queen gap, or a compensated queen gap still worth at least a minor | Queen-for-material (`queen_for_knight`) | T1 odds |
+| At least 8 points with a genuine, almost uncompensated queen-count gap | Near-full queen odds (`queen`) | LQO v2 |
 
 The legacy mode identifiers remain unchanged for dashboard/config
 compatibility; “equivalent” is important because three pawns, a bishop, and
-other combinations can occupy the same band. Promotions and underpromotions
-are naturally included by recounting the pieces in every confirmed position.
-LQO is never selected merely because several non-queen pieces add up to nine
-points.
+other combinations can occupy the same band. The historical
+`queen_for_knight` identifier now means the broader and more honest
+queen-for-material T1 fallback: queen for bishop is identical to queen for
+knight, and one to three extra pawns do not pretend to be an exact separate
+network. At four pawns of compensation the remaining two-point deficit returns
+to BT4. Promotions and underpromotions are naturally included by recounting the
+pieces in every confirmed position. LQO is never selected merely because
+several non-queen pieces add up to nine points, and it is left as soon as
+meaningful captured-piece compensation makes T1 or BT4 a better match.
 
 Network changes are accepted immediately for positions confirmed by legal move
 reconciliation, move history, or a declared FEN. A DOM-only fallback placement
 is provisional: analysis is cancelled, the last confirmed per-page mode remains
 published, and neither Chess.com nor Lichess animation frames can select a new
-LCZero process.
+LCZero process. A confirmed material-mode change cancels stale work and selects
+the matching already-warmed process immediately, including after the player's
+own move when opponent-turn analysis is disabled.
 
 ## Install the browser extension
 

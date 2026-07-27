@@ -324,6 +324,25 @@ class StockfishService:
             assert self._engine is not None
             return self._engine, self._game_token
 
+    def select_network(self, board: chess.Board, odds_mode: str) -> str:
+        """Select and configure the warmed process without starting a search.
+
+        Material can change on the player's own move while opponent analysis is
+        disabled. Selecting here keeps the physical LCZero process aligned with
+        the dashboard immediately instead of waiting for the opponent's reply.
+        """
+
+        if self.config.engine_kind != "lc0":
+            return "none"
+        with self._search_lock:
+            engine, _ = self._engine_for_board(board, odds_mode)
+            selected, _ = self._prepare_for_board(
+                engine,
+                board,
+                odds_mode=odds_mode,
+            )
+            return selected
+
     def _weights_path(self, board: chess.Board | None = None, odds_mode: str | None = None) -> Path | None:
         if self.config.engine_kind != "lc0":
             return None

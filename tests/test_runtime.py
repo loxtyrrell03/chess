@@ -84,6 +84,7 @@ class RecordingLifecycleEngine:
         self.reserve_calls = 0
         self.new_game_calls = 0
         self.player_colors: list[chess.Color | None] = []
+        self.selected_modes: list[str] = []
 
     def set_player_color(self, color: chess.Color | None) -> None:
         self.player_colors.append(color)
@@ -97,6 +98,10 @@ class RecordingLifecycleEngine:
 
     def new_game(self) -> None:
         self.new_game_calls += 1
+
+    def select_network(self, _board: chess.Board, odds_mode: str) -> str:
+        self.selected_modes.append(odds_mode)
+        return odds_mode
 
 
 def snapshot_message(
@@ -466,9 +471,150 @@ async def test_live_odds_transition_ignores_partial_frame_then_switches_and_reve
     ]
     assert dashboard_states[1]["sync"] == "transient"
     assert scheduled_modes == ["none", "queen", "none"]
+    assert engine.selected_modes == ["none", "queen", "none"]
     assert engine.cancel_calls >= 1
     assert engine.reserve_calls == 3
     assert runtime._effective_odds_modes["live-odds-page"] == "none"
+
+    for task in runtime._analysis_tasks.values():
+        task.cancel()
+    await asyncio.gather(*runtime._analysis_tasks.values(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_compensation_recovery_switches_lqo_to_t1_then_bt4_while_queen_remains() -> None:
+    starting_fen = "r2qk3/8/8/8/8/b7/8/R1B1K3 w - - 0 1"
+    board = chess.Board(starting_fen)
+    runtime = RuntimeController(
+        AppConfig(
+            engine_kind="lc0",
+            lc0_auto_network=True,
+            analyze_opponent=False,
+        )
+    )
+    engine = RecordingLifecycleEngine()
+    bridge = FakeBridge()
+    runtime._engine = engine  # type: ignore[assignment]
+    runtime._bridge = bridge  # type: ignore[assignment]
+    scheduled_modes: list[str] = []
+
+    async def hold_analysis(
+        _page_id: str,
+        _revision: int,
+        _board: chess.Board,
+        _guard: AnalysisGuard | None,
+        _generation: int | None,
+        odds_mode: str | None,
+    ) -> None:
+        scheduled_modes.append(odds_mode or "none")
+        await asyncio.Event().wait()
+
+    runtime._analyse = hold_analysis  # type: ignore[method-assign]
+    websocket = object()
+    await runtime._handle_snapshot(
+        snapshot_message(
+            board,
+            seq=1,
+            starting_fen=starting_fen,
+            moves=(),
+            player_color=chess.WHITE,
+            url="https://lichess.org/recovery",
+        ),
+        websocket,  # type: ignore[arg-type]
+    )
+    await asyncio.sleep(0)
+
+    sans: list[str] = []
+    for seq, san in enumerate(("Rxa3", "Qd7", "Rxa8+"), start=2):
+        move = board.parse_san(san)
+        sans.append(board.san(move))
+        board.push(move)
+        await runtime._handle_snapshot(
+            snapshot_message(
+                board,
+                seq=seq,
+                starting_fen=starting_fen,
+                moves=tuple(sans),
+                player_color=chess.WHITE,
+                url="https://lichess.org/recovery",
+            ),
+            websocket,  # type: ignore[arg-type]
+        )
+        await asyncio.sleep(0)
+
+    states = [message for message in bridge.messages if message["type"] == "dashboard.state"]
+    assert [state["oddsMode"] for state in states] == [
+        "queen",
+        "queen_for_knight",
+        "queen_for_knight",
+        "none",
+    ]
+    assert engine.selected_modes == ["queen", "queen_for_knight", "none"]
+    assert scheduled_modes == ["queen", "queen_for_knight"]
+    assert engine.cancel_calls >= 3
+    assert board.pieces(chess.QUEEN, chess.BLACK)
+
+    for task in runtime._analysis_tasks.values():
+        task.cancel()
+    await asyncio.gather(*runtime._analysis_tasks.values(), return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_provisional_game_marker_frame_retains_confirmed_network_cache() -> None:
+    starting_fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNB1KBNR w KQkq - 0 1"
+    board = chess.Board(starting_fen)
+    runtime = RuntimeController(
+        AppConfig(
+            engine_kind="lc0",
+            lc0_auto_network=True,
+            analyze_opponent=False,
+        )
+    )
+    engine = RecordingLifecycleEngine()
+    bridge = FakeBridge()
+    runtime._engine = engine  # type: ignore[assignment]
+    runtime._bridge = bridge  # type: ignore[assignment]
+
+    async def hold_analysis(
+        _page_id: str,
+        _revision: int,
+        _board: chess.Board,
+        _guard: AnalysisGuard | None,
+        _generation: int | None,
+        _odds_mode: str | None,
+    ) -> None:
+        await asyncio.Event().wait()
+
+    runtime._analyse = hold_analysis  # type: ignore[method-assign]
+    websocket = object()
+    confirmed = snapshot_message(
+        board,
+        seq=1,
+        starting_fen=starting_fen,
+        moves=(),
+        player_color=chess.WHITE,
+        url="https://lichess.org/marker",
+    )
+    await runtime._handle_snapshot(confirmed, websocket)  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+
+    provisional = snapshot_message(
+        board,
+        seq=2,
+        starting_fen=chess.STARTING_FEN,
+        moves=("not-a-move",),
+        player_color=chess.WHITE,
+        url="https://lichess.org/marker",
+    )
+    provisional["gameKey"] = "temporarily-different-marker"
+    await runtime._handle_snapshot(provisional, websocket)  # type: ignore[arg-type]
+    await asyncio.sleep(0)
+
+    states = [message for message in bridge.messages if message["type"] == "dashboard.state"]
+    assert [state["oddsMode"] for state in states] == ["queen", "queen"]
+    assert states[-1]["sync"] == "transient"
+    assert engine.selected_modes == ["queen"]
+    assert runtime._effective_odds_modes["live-odds-page"] == "queen"
 
     for task in runtime._analysis_tasks.values():
         task.cancel()
@@ -557,3 +703,22 @@ def test_effective_odds_cache_is_isolated_per_page_and_ignores_provisional_value
         chess.WHITE,
         confirmed=False,
     ) == "none"
+
+
+def test_confirmed_mode_change_logs_material_evidence(caplog: pytest.LogCaptureFixture) -> None:
+    runtime = RuntimeController(AppConfig(engine_kind="lc0", lc0_auto_network=True))
+    white_down_queen = chess.Board()
+    white_down_queen.remove_piece_at(chess.D1)
+
+    with caplog.at_level("INFO", logger="chess_trainer.runtime"):
+        mode = runtime._effective_odds_mode_for(
+            "logged-page",
+            white_down_queen,
+            chess.WHITE,
+            confirmed=True,
+        )
+
+    assert mode == "queen"
+    assert "unset -> queen family=lqo" in caplog.text
+    assert "balance_cp=-900" in caplog.text
+    assert "player_counts=(8, 2, 2, 2, 0)" in caplog.text

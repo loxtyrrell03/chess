@@ -18,12 +18,14 @@ PIECE_VALUES_CP = {
 
 # These are handicap-equivalent bands, not claims that the installed networks
 # model every material composition independently. BT4 handles ordinary
-# imbalances; T1 handles the three middle bands; LQO is reserved for a genuine
+# imbalances; T1 handles the three middle labels; LQO is reserved for a genuine
 # near-full queen deficit.
 MINOR_ODDS_THRESHOLD_CP = 300
 ROOK_ODDS_THRESHOLD_CP = 500
 QUEEN_FOR_MINOR_THRESHOLD_CP = 600
 QUEEN_ODDS_THRESHOLD_CP = 800
+MINOR_WITH_PAWN_COMPENSATION_THRESHOLD_CP = 200
+ROOK_WITH_PAWN_COMPENSATION_THRESHOLD_CP = 300
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +38,10 @@ class MaterialAssessment:
     opponent_value_cp: int
     balance_cp: int
     deficit_cp: int
+    gross_deficit_cp: int
+    compensation_cp: int
+    minor_count_deficit: int
+    rook_count_deficit: int
     queen_count_deficit: int
     odds_mode: str
 
@@ -54,11 +60,12 @@ def assess_material(
 ) -> MaterialAssessment | None:
     """Return a complete, player-relative material assessment.
 
-    The net balance automatically accounts for exchanges and compensation:
-    losing a rook while taking a minor is only a two-pawn deficit, equal trades
-    cancel, and pieces captured from the opponent reduce (rather than create)
-    the player's deficit. Promotions and underpromotions need no special case
-    because the live piece counts already contain the promoted piece.
+    Net balance accounts for exchanges and compensation, while unmatched piece
+    counts retain materially important composition. Thus a rook for a minor is
+    only an exchange and stays on BT4, but one fewer minor with only one pawn
+    in return remains a real minor handicap even though its net value is two.
+    Promotions and underpromotions need no special case because every confirmed
+    live position is recounted.
     """
 
     if board is None or player_color is None:
@@ -83,8 +90,55 @@ def assess_material(
     )
     balance = player_value - opponent_value
     deficit = max(0, -balance)
+    player_minor_count = player_counts[1] + player_counts[2]
+    opponent_minor_count = opponent_counts[1] + opponent_counts[2]
+    grouped_values = (100, 300, 500, 900)
+    player_groups = (
+        player_counts[0],
+        player_minor_count,
+        player_counts[3],
+        player_counts[4],
+    )
+    opponent_groups = (
+        opponent_counts[0],
+        opponent_minor_count,
+        opponent_counts[3],
+        opponent_counts[4],
+    )
+    gross_deficit = sum(
+        max(0, opponent_count - player_count) * value
+        for player_count, opponent_count, value in zip(
+            player_groups,
+            opponent_groups,
+            grouped_values,
+            strict=True,
+        )
+    )
+    compensation = sum(
+        max(0, player_count - opponent_count) * value
+        for player_count, opponent_count, value in zip(
+            player_groups,
+            opponent_groups,
+            grouped_values,
+            strict=True,
+        )
+    )
+    minor_count_deficit = max(0, opponent_minor_count - player_minor_count)
+    rook_count_deficit = max(0, opponent_counts[3] - player_counts[3])
     queen_count_deficit = max(0, opponent_counts[-1] - player_counts[-1])
-    mode = _mode_for_deficit(deficit, queen_count_deficit)
+    minor_count_surplus = max(0, player_minor_count - opponent_minor_count)
+    rook_count_surplus = max(0, player_counts[3] - opponent_counts[3])
+    queen_count_surplus = max(0, player_counts[4] - opponent_counts[4])
+    mode = _mode_for_material(
+        deficit_cp=deficit,
+        compensation_cp=compensation,
+        minor_count_deficit=minor_count_deficit,
+        minor_count_surplus=minor_count_surplus,
+        rook_count_deficit=rook_count_deficit,
+        rook_count_surplus=rook_count_surplus,
+        queen_count_deficit=queen_count_deficit,
+        queen_count_surplus=queen_count_surplus,
+    )
     return MaterialAssessment(
         player_counts=player_counts,
         opponent_counts=opponent_counts,
@@ -92,6 +146,10 @@ def assess_material(
         opponent_value_cp=opponent_value,
         balance_cp=balance,
         deficit_cp=deficit,
+        gross_deficit_cp=gross_deficit,
+        compensation_cp=compensation,
+        minor_count_deficit=minor_count_deficit,
+        rook_count_deficit=rook_count_deficit,
         queen_count_deficit=queen_count_deficit,
         odds_mode=mode,
     )
@@ -104,17 +162,58 @@ def detect_odds_mode(board: chess.Board | None, player_color: chess.Color | None
     return assessment.odds_mode if assessment is not None else "none"
 
 
-def _mode_for_deficit(deficit_cp: int, queen_count_deficit: int) -> str:
-    if deficit_cp < MINOR_ODDS_THRESHOLD_CP:
+def _mode_for_material(
+    *,
+    deficit_cp: int,
+    compensation_cp: int,
+    minor_count_deficit: int,
+    minor_count_surplus: int,
+    rook_count_deficit: int,
+    rook_count_surplus: int,
+    queen_count_deficit: int,
+    queen_count_surplus: int,
+) -> str:
+    if deficit_cp <= 0:
         return "none"
-    if deficit_cp < ROOK_ODDS_THRESHOLD_CP:
-        return "knight"
-    if deficit_cp < QUEEN_FOR_MINOR_THRESHOLD_CP:
-        return "rook"
-    if deficit_cp < QUEEN_ODDS_THRESHOLD_CP:
-        return "queen_for_knight"
+
     if queen_count_deficit:
-        return "queen"
-    # LQO is specifically queen-odds trained. A huge deficit made from rooks,
-    # minors, or pawns is still better represented by the general T1 odds net.
-    return "queen_for_knight"
+        # LQO is an actual queen-odds network, so reserve it for a queen-count
+        # gap with no meaningful captured-piece compensation. One pawn per
+        # unmatched queen is allowed because a promoted opposing queen itself
+        # consumes a pawn. Once the player wins a minor, rook, or several pawns
+        # back, T1 is the honest coarse fallback while a full minor-equivalent
+        # net deficit remains.
+        if (
+            deficit_cp >= QUEEN_ODDS_THRESHOLD_CP
+            and compensation_cp <= queen_count_deficit * PIECE_VALUES_CP[chess.PAWN]
+        ):
+            return "queen"
+        if deficit_cp >= MINOR_ODDS_THRESHOLD_CP:
+            return "queen_for_knight"
+        return "none"
+
+    # Above a rook-equivalent deficit T1's highest compatibility label is the
+    # least misleading available choice, regardless of which several pieces
+    # compose it.
+    if deficit_cp >= QUEEN_FOR_MINOR_THRESHOLD_CP:
+        return "queen_for_knight"
+    if (
+        rook_count_deficit
+        and not minor_count_surplus
+        and not rook_count_surplus
+        and not queen_count_surplus
+        and deficit_cp >= ROOK_WITH_PAWN_COMPENSATION_THRESHOLD_CP
+    ):
+        return "rook"
+    if deficit_cp >= ROOK_ODDS_THRESHOLD_CP:
+        return "rook"
+    if (
+        minor_count_deficit
+        and not rook_count_surplus
+        and not queen_count_surplus
+        and deficit_cp >= MINOR_WITH_PAWN_COMPENSATION_THRESHOLD_CP
+    ):
+        return "knight"
+    if deficit_cp >= MINOR_ODDS_THRESHOLD_CP:
+        return "knight"
+    return "none"

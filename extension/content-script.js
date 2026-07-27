@@ -920,10 +920,10 @@
           </section>
           <section class="settings">
             <label class="field"><span>Engine</span><select class="engine-select"><option value="stockfish">Stockfish 18</option><option value="lc0">LCZero 0.32.1</option></select></label>
-            <label class="field"><span>Odds network</span><select class="odds-select"><option value="none">Normal (BT4)</option><option value="knight">Minor-equivalent (T1)</option><option value="rook">Rook-equivalent (T1)</option><option value="queen_for_knight">Q-for-minor equivalent (T1)</option><option value="queen">Near-full queen odds (LQO)</option></select></label>
+            <label class="field"><span>Odds network</span><select class="odds-select"><option value="none">Normal (BT4)</option><option value="knight">Minor-equivalent (T1)</option><option value="rook">Rook-equivalent (T1)</option><option value="queen_for_knight">Queen-for-material (T1)</option><option value="queen">Near-full queen odds (LQO)</option></select></label>
             <label class="field contempt"><span class="contempt-head"><span>LC0 contempt</span><output class="contempt-value">0</output></span><input class="contempt-slider" type="range" min="-1000" max="1000" step="25" value="0"></label>
             <div class="checks"><label class="check"><input class="auto-network" type="checkbox">Auto network</label><label class="check"><input class="auto-contempt" type="checkbox">Auto contempt</label><label class="check"><input class="analyze-opponent" type="checkbox">Analyze opponent</label><label class="check"><input class="opponent-arrows" type="checkbox">Opponent arrows</label></div>
-            <div class="hint">Auto network uses the player's net material deficit. One or two pawns and an exchange stay on BT4; T1/LQO are reserved for full-piece-equivalent handicaps. Auto contempt probes at neutral, then adds up to +250 practical bias when the side to move is worse.</div>
+            <div class="hint">Auto network uses the player's net deficit plus unmatched piece counts. One or two pawns and an exchange stay on BT4; a full minor with only one pawn back still uses T1. LQO is reserved for an almost uncompensated queen gap. Auto contempt probes at neutral, then adds up to +250 practical bias when the side to move is worse.</div>
           </section>
           <div class="buttons"><button data-action="monitoring">Pause</button><button data-action="recalibrate">Recalibrate</button><button data-action="analyze">Analyze</button><button data-action="overlays">Arrows on</button></div>
         </div>
@@ -1159,7 +1159,7 @@
     }
     if (analysis.engine_name) dashboard.engineName.textContent = analysis.engine_name;
     dashboard.engine.classList.toggle("thinking", Boolean(dashboardState.monitoring));
-    const networkLabels = { none: "BT4 normal", knight: "T1 minor-equivalent", rook: "T1 rook-equivalent", queen_for_knight: "T1 Q-for-minor equivalent", queen: "LQO near-full queen" };
+    const networkLabels = { none: "BT4 normal", knight: "T1 minor-equivalent", rook: "T1 rook-equivalent", queen_for_knight: "T1 queen-for-material", queen: "LQO near-full queen" };
     const networkLabel = networkLabels[analysis.odds_mode] || String(analysis.odds_mode || "BT4").replaceAll("_", " ");
     if (dashboardState.lc0AutoNetwork && Object.hasOwn(networkLabels, analysis.odds_mode)) {
       dashboardState.oddsMode = analysis.odds_mode;

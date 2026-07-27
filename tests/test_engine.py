@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 
 import chess
 import pytest
@@ -187,6 +188,49 @@ def test_lc0_network_switch_reuses_warm_process() -> None:
     assert selected_normal is normal_engine
     assert service._engine_pool[Path(config.lc0_t1_odds_weights)] is t1_engine
     assert service._engine_pool[Path(config.lc0_queen_odds_weights)] is queen_engine
+
+
+def test_explicit_network_selection_switches_warm_process_without_search(tmp_path: Path) -> None:
+    normal_weights = tmp_path / "normal.pb.gz"
+    queen_weights = tmp_path / "queen.pb.gz"
+    normal_weights.touch()
+    queen_weights.touch()
+    service = StockfishService(
+        AppConfig(
+            engine_kind="lc0",
+            lc0_auto_network=True,
+            lc0_bt4_weights=str(normal_weights),
+            lc0_queen_odds_weights=str(queen_weights),
+        )
+    )
+    normal_engine = FakeUciEngine()
+    queen_engine = FakeUciEngine()
+    defaults = {
+        "SwapColors": False,
+        "ScLimit": 0,
+        "CPuct": 1.0,
+        "FpuValue": 0.0,
+        "DrawScore": 0.0,
+    }
+    for engine in (normal_engine, queen_engine):
+        engine.options.update({
+            name: SimpleNamespace(default=default)
+            for name, default in defaults.items()
+        })
+    service._engine = normal_engine  # type: ignore[assignment]
+    service._loaded_weights = normal_weights
+    service._engine_pool[queen_weights] = queen_engine  # type: ignore[assignment]
+    service.set_player_color(chess.WHITE)
+
+    selected_queen = service.select_network(chess.Board(), "queen")
+    selected_normal = service.select_network(chess.Board(), "none")
+
+    assert selected_queen == "queen"
+    assert selected_normal == "none"
+    assert service._engine is normal_engine
+    assert service._engine_pool[queen_weights] is queen_engine
+    assert queen_engine.configured["SwapColors"] is False
+    assert normal_engine.configured["SwapColors"] is False
 
 
 @pytest.mark.parametrize(
