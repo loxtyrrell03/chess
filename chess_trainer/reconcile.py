@@ -163,12 +163,18 @@ class GameReconciler:
 
         # A content-script reload can attach halfway through a game. If one
         # historical SAN token cannot be replayed, there is no previous board
-        # from which to infer the latest move. Recover the exact observed piece
-        # placement and side to move so analysis and overlays keep updating.
-        # Castling and en-passant are deliberately left unavailable rather than
-        # guessed; a later successfully replayed snapshot restores full state.
+        # from which to infer the latest move. On that first attachment only,
+        # retain the observed placement as a provisional recovery. Runtime must
+        # not analyze it or change networks until later history, a declared FEN,
+        # or a legal transition confirms it.
+        #
+        # Once a game has an established board, never replace it with an
+        # arbitrary placement. Chess.com and Chessground animations can expose
+        # a captured piece disappearing before the mover reaches its target.
+        # The following complete frame will match a legal move from the retained
+        # board and can then be accepted immediately.
         observed = _observed_position(snapshot)
-        if observed is not None:
+        if observed is not None and new_game:
             changed = observed.fen() != self.board.fen()
             self.board = observed
             if changed:
@@ -179,6 +185,7 @@ class GameReconciler:
                 self.board.copy(stack=True),
                 new_game=new_game,
                 message="Recovered from observed board placement",
+                provisional=True,
             )
 
         reason = "No legal transition matches the observed board"

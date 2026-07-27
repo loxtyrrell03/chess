@@ -166,6 +166,24 @@ def test_recovers_one_dropped_snapshot() -> None:
     assert [move.uci() for move in transition.moves] == ["e2e4", "e7e5"]
 
 
+def test_partial_capture_animation_does_not_replace_the_last_legal_position() -> None:
+    board = chess.Board()
+    tracker = GameReconciler()
+    tracker.ingest(snapshot_for(board, seq=1))
+
+    # Chess.com and Chessground can expose the captured/moving pieces at
+    # different animation instants. Removing a queen alone is not a legal
+    # transition and must not become the material state used for odds mode.
+    partial = board.copy(stack=False)
+    partial.remove_piece_at(chess.D1)
+    snapshot = replace(snapshot_for(partial, seq=2), side_to_move=chess.BLACK)
+
+    transition = tracker.ingest(snapshot)
+
+    assert transition.state is SyncState.TRANSIENT
+    assert tracker.board and tracker.board.fen() == board.fen()
+
+
 def test_invalid_starting_fen_never_crashes_reconciliation() -> None:
     observed = chess.Board("4k3/8/8/8/8/8/8/4K3 w - - 0 1")
     tracker = GameReconciler()
@@ -192,6 +210,7 @@ def test_attaches_midgame_from_live_placement_when_history_is_not_replayable() -
 
     assert transition.state is SyncState.SYNCHRONIZED
     assert transition.message == "Recovered from observed board placement"
+    assert transition.provisional
     assert transition.board and transition.board.board_fen() == board.board_fen()
     assert transition.board.turn == board.turn
 
@@ -217,5 +236,6 @@ def test_continues_detecting_moves_after_midgame_placement_recovery() -> None:
     transition = tracker.ingest(next_snapshot)
 
     assert transition.state is SyncState.SYNCHRONIZED
+    assert not transition.provisional
     assert transition.moves == (move,)
     assert transition.board and transition.board.board_fen() == board.board_fen()

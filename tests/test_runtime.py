@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import chess
@@ -7,7 +8,7 @@ import pytest
 
 from chess_trainer.config import AppConfig
 from chess_trainer.engine import StockfishError
-from chess_trainer.models import AnalysisResult, AnalysisVariation, Orientation
+from chess_trainer.models import AnalysisResult, AnalysisVariation, Orientation, SyncState
 from chess_trainer.policy import classify_page
 from chess_trainer.reconcile import GameReconciler
 from chess_trainer.runtime import AnalysisGuard, RuntimeController, _is_opponent_turn, _player_color
@@ -42,8 +43,11 @@ class FakeEngine:
         revision: int,
         publish: Any,
         _cancel_generation: int | None = None,
+        odds_mode: str | None = None,
     ) -> None:
-        publish(self.analyse(board, revision))
+        result = self.analyse(board, revision)
+        object.__setattr__(result, "odds_mode", odds_mode)
+        publish(result)
 
     def reserve_analysis(self) -> int:
         return 1
@@ -59,6 +63,7 @@ class FakeEngine:
         _board: chess.Board,
         _revision: int,
         _cancel_generation: int,
+        _odds_mode: str | None = None,
     ) -> None:
         return None
 
@@ -70,6 +75,66 @@ class FakeBridge:
     async def send(self, _client: Any, message: dict[str, Any]) -> bool:
         self.messages.append(message)
         return True
+
+
+class RecordingLifecycleEngine:
+    def __init__(self) -> None:
+        self.name = "LCZero test double"
+        self.cancel_calls = 0
+        self.reserve_calls = 0
+        self.new_game_calls = 0
+        self.player_colors: list[chess.Color | None] = []
+
+    def set_player_color(self, color: chess.Color | None) -> None:
+        self.player_colors.append(color)
+
+    def reserve_analysis(self) -> int:
+        self.reserve_calls += 1
+        return self.reserve_calls
+
+    def cancel(self) -> None:
+        self.cancel_calls += 1
+
+    def new_game(self) -> None:
+        self.new_game_calls += 1
+
+
+def snapshot_message(
+    board: chess.Board,
+    *,
+    seq: int,
+    starting_fen: str,
+    moves: tuple[str, ...],
+    player_color: chess.Color,
+    url: str,
+) -> dict[str, Any]:
+    return {
+        "v": 1,
+        "type": "position.snapshot",
+        "pageId": "live-odds-page",
+        "seq": seq,
+        "gameKey": "live-odds-game",
+        "positionHash": f"{seq:064x}",
+        "page": {
+            "url": url,
+            "visible": True,
+            "focused": True,
+        },
+        "board": {
+            "pieces": {
+                chess.square_name(square): piece.symbol()
+                for square, piece in board.piece_map().items()
+            },
+            "startingFen": starting_fen,
+            "orientation": "white" if player_color == chess.WHITE else "black",
+            "orientationConfidence": 1.0,
+            "playerColor": "white" if player_color == chess.WHITE else "black",
+        },
+        "moves": list(moves),
+        "game": {
+            "sideToMove": "white" if board.turn == chess.WHITE else "black",
+        },
+    }
 
 
 def prepared_runtime(board: chess.Board, *, player_color: chess.Color) -> tuple[RuntimeController, str, int, FakeBridge]:
@@ -265,3 +330,230 @@ async def test_engine_result_is_not_executed_against_latest_desynchronized_snaps
     await runtime._analyse(page_id, revision, board.copy(stack=True))
 
     assert bridge.messages == []
+
+
+@pytest.mark.parametrize(
+    ("player_color", "starting_fen", "capture_uci", "recapture_uci"),
+    [
+        (
+            chess.WHITE,
+            "r3k3/8/8/8/8/8/3q4/R2Q3K b - - 0 1",
+            "d2d1",
+            "a1d1",
+        ),
+        (
+            chess.BLACK,
+            "r2q3k/3Q4/8/8/8/8/8/R3K3 w - - 0 1",
+            "d7d8",
+            "a8d8",
+        ),
+    ],
+    ids=["white-player", "black-player"],
+)
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://www.chess.com/play/computer",
+        "https://lichess.org/eZY8AAa5",
+    ],
+    ids=["chess-com", "lichess"],
+)
+@pytest.mark.asyncio
+async def test_live_odds_transition_ignores_partial_frame_then_switches_and_reverts(
+    player_color: chess.Color,
+    starting_fen: str,
+    capture_uci: str,
+    recapture_uci: str,
+    url: str,
+) -> None:
+    runtime = RuntimeController(
+        AppConfig(
+            engine_kind="lc0",
+            lc0_auto_network=True,
+            analyze_opponent=True,
+        )
+    )
+    engine = RecordingLifecycleEngine()
+    bridge = FakeBridge()
+    runtime._engine = engine  # type: ignore[assignment]
+    runtime._bridge = bridge  # type: ignore[assignment]
+    scheduled_modes: list[str] = []
+
+    async def hold_analysis(
+        _page_id: str,
+        _revision: int,
+        _board: chess.Board,
+        _guard: AnalysisGuard | None,
+        _generation: int | None,
+        odds_mode: str | None,
+    ) -> None:
+        scheduled_modes.append(odds_mode or "none")
+        await asyncio.Event().wait()
+
+    runtime._analyse = hold_analysis  # type: ignore[method-assign]
+    websocket = object()
+    board = chess.Board(starting_fen)
+
+    await runtime._handle_snapshot(
+        snapshot_message(
+            board,
+            seq=1,
+            starting_fen=starting_fen,
+            moves=(),
+            player_color=player_color,
+            url=url,
+        ),
+        websocket,  # type: ignore[arg-type]
+    )
+    await asyncio.sleep(0)
+
+    capture = chess.Move.from_uci(capture_uci)
+    capture_san = board.san(capture)
+    partial = board.copy(stack=True)
+    partial.remove_piece_at(capture.to_square)
+    partial.turn = player_color
+    await runtime._handle_snapshot(
+        snapshot_message(
+            partial,
+            seq=2,
+            starting_fen=starting_fen,
+            moves=(capture_san,),
+            player_color=player_color,
+            url=url,
+        ),
+        websocket,  # type: ignore[arg-type]
+    )
+    await asyncio.sleep(0)
+
+    board.push(capture)
+    await runtime._handle_snapshot(
+        snapshot_message(
+            board,
+            seq=3,
+            starting_fen=starting_fen,
+            moves=(capture_san,),
+            player_color=player_color,
+            url=url,
+        ),
+        websocket,  # type: ignore[arg-type]
+    )
+    await asyncio.sleep(0)
+
+    recapture = chess.Move.from_uci(recapture_uci)
+    recapture_san = board.san(recapture)
+    board.push(recapture)
+    await runtime._handle_snapshot(
+        snapshot_message(
+            board,
+            seq=4,
+            starting_fen=starting_fen,
+            moves=(capture_san, recapture_san),
+            player_color=player_color,
+            url=url,
+        ),
+        websocket,  # type: ignore[arg-type]
+    )
+    await asyncio.sleep(0)
+
+    dashboard_states = [
+        message for message in bridge.messages if message["type"] == "dashboard.state"
+    ]
+    assert [state["oddsMode"] for state in dashboard_states] == [
+        "none",
+        "none",
+        "queen",
+        "none",
+    ]
+    assert dashboard_states[1]["sync"] == "transient"
+    assert scheduled_modes == ["none", "queen", "none"]
+    assert engine.cancel_calls >= 1
+    assert engine.reserve_calls == 3
+    assert runtime._effective_odds_modes["live-odds-page"] == "none"
+
+    for task in runtime._analysis_tasks.values():
+        task.cancel()
+    await asyncio.gather(*runtime._analysis_tasks.values(), return_exceptions=True)
+
+
+@pytest.mark.parametrize(
+    ("promotion", "expected"),
+    [
+        ("q", "queen"),
+        ("r", "rook"),
+        ("b", "knight"),
+        ("n", "knight"),
+    ],
+)
+def test_confirmed_live_promotions_select_from_the_promoted_material(
+    promotion: str,
+    expected: str,
+) -> None:
+    starting_fen = "4k3/8/8/8/8/8/p7/4K3 b - - 0 1"
+    board = chess.Board(starting_fen)
+    tracker = GameReconciler()
+    tracker.ingest(snapshot_for(board, seq=1, starting_fen=starting_fen))
+    board.push_uci(f"a2a1{promotion}")
+    transition = tracker.ingest(snapshot_for(board, seq=2, starting_fen=starting_fen))
+    runtime = RuntimeController(AppConfig(engine_kind="lc0", lc0_auto_network=True))
+
+    mode = runtime._effective_odds_mode_for(
+        "promotion-page",
+        transition.board,
+        chess.WHITE,
+        confirmed=transition.state is SyncState.SYNCHRONIZED,
+    )
+
+    assert mode == expected
+
+
+@pytest.mark.asyncio
+async def test_stale_analysis_from_previous_effective_mode_is_not_published() -> None:
+    board = chess.Board()
+    runtime, page_id, revision, bridge = prepared_runtime(board, player_color=chess.WHITE)
+    runtime.config.engine_kind = "lc0"
+    runtime.config.lc0_auto_network = True
+    runtime._effective_odds_modes[page_id] = "queen"
+    result = FakeEngine(chess.Move.from_uci("e2e4")).analyse(board, revision)
+    guard = AnalysisGuard(
+        game_key=page_id,
+        position_hash="a" * 64,
+        fen=board.fen(),
+        odds_mode="none",
+    )
+
+    await runtime._publish_live_analysis(page_id, revision, board, guard, result)
+
+    assert bridge.messages == []
+
+
+def test_effective_odds_cache_is_isolated_per_page_and_ignores_provisional_values() -> None:
+    runtime = RuntimeController(AppConfig(engine_kind="lc0", lc0_auto_network=True))
+    white_down_queen = chess.Board()
+    white_down_queen.remove_piece_at(chess.D1)
+
+    assert runtime._effective_odds_mode_for(
+        "queen-page",
+        white_down_queen,
+        chess.WHITE,
+        confirmed=True,
+    ) == "queen"
+    assert runtime._effective_odds_mode_for(
+        "normal-page",
+        chess.Board(),
+        chess.WHITE,
+        confirmed=True,
+    ) == "none"
+
+    # Provisional values cannot leak between pages or overwrite either cache.
+    assert runtime._effective_odds_mode_for(
+        "queen-page",
+        chess.Board(),
+        chess.WHITE,
+        confirmed=False,
+    ) == "queen"
+    assert runtime._effective_odds_mode_for(
+        "normal-page",
+        white_down_queen,
+        chess.WHITE,
+        confirmed=False,
+    ) == "none"

@@ -13,6 +13,7 @@ import chess
 import chess.engine
 
 from .config import AppConfig
+from .material import detect_odds_mode
 from .models import AnalysisResult, AnalysisVariation
 
 
@@ -56,7 +57,7 @@ class StockfishService:
         with self._lock:
             self._player_color = color
 
-    def start(self, board: chess.Board | None = None) -> str:
+    def start(self, board: chess.Board | None = None, odds_mode: str | None = None) -> str:
         with self._lock:
             if self._engine is not None:
                 return self.name
@@ -68,7 +69,7 @@ class StockfishService:
             )
             if not path.is_file():
                 raise StockfishError(f"{_engine_label(kind)} binary not found: {path}")
-            weights = self._weights_path(board)
+            weights = self._weights_path(board, odds_mode)
             if weights is not None and not weights.is_file():
                 raise StockfishError(f"LCZero network not found: {weights}")
             try:
@@ -209,7 +210,13 @@ class StockfishService:
                     except Exception:
                         preview.close()
 
-    def preview(self, board: chess.Board, revision: int, cancel_generation: int) -> AnalysisResult | None:
+    def preview(
+        self,
+        board: chess.Board,
+        revision: int,
+        cancel_generation: int,
+        odds_mode: str | None = None,
+    ) -> AnalysisResult | None:
         """Return a fast provisional move while the selected LCZero net warms."""
 
         if self.config.engine_kind != "lc0" or not self._generation_is_current(cancel_generation):
@@ -234,7 +241,7 @@ class StockfishService:
             return None
         return replace(
             result,
-            odds_mode=self._effective_odds_mode(board),
+            odds_mode=self._effective_odds_mode(board, odds_mode),
             engine_name="Stockfish preview",
         )
 
@@ -273,14 +280,19 @@ class StockfishService:
         options = {key: value for key, value in requested.items() if key in supported}
         engine.configure(options)
 
-    def _engine_for_board(self, board: chess.Board) -> tuple[chess.engine.SimpleEngine, object]:
+    def _engine_for_board(
+        self,
+        board: chess.Board,
+        odds_mode: str | None = None,
+    ) -> tuple[chess.engine.SimpleEngine, object]:
         """Return an engine loaded with the board's network.
 
         LC0's CUDA backend is not reliable when very large networks are hot-
         swapped repeatedly. Each network therefore keeps a dedicated process.
         """
 
-        desired_weights = self._weights_path(board)
+        effective_odds_mode = self._effective_odds_mode(board, odds_mode)
+        desired_weights = self._weights_path(board, effective_odds_mode)
         duplicate: chess.engine.SimpleEngine | None = None
         with self._lock:
             if (
@@ -292,7 +304,7 @@ class StockfishService:
                     "LCZero network change: %s -> %s (mode=%s)",
                     self._loaded_weights.name if self._loaded_weights else "none",
                     desired_weights.name if desired_weights else "none",
-                    self._effective_odds_mode(board),
+                    effective_odds_mode,
                 )
                 assert self._loaded_weights is not None
                 if self._loaded_weights not in self._engine_pool:
@@ -308,7 +320,7 @@ class StockfishService:
             _close_engine(duplicate)
         with self._lock:
             if self._engine is None:
-                self.start(board)
+                self.start(board, effective_odds_mode)
             assert self._engine is not None
             return self._engine, self._game_token
 
@@ -322,9 +334,15 @@ class StockfishService:
             return Path(self.config.lc0_t1_odds_weights)
         return Path(self.config.lc0_bt4_weights)
 
-    def _effective_odds_mode(self, board: chess.Board | None = None) -> str:
+    def _effective_odds_mode(
+        self,
+        board: chess.Board | None = None,
+        odds_mode: str | None = None,
+    ) -> str:
         if self.config.engine_kind != "lc0":
             return "none"
+        if odds_mode is not None:
+            return odds_mode
         if self.config.lc0_auto_network:
             return detect_odds_mode(board, self._player_color) if board is not None else "none"
         return self.config.odds_mode
@@ -335,10 +353,11 @@ class StockfishService:
         board: chess.Board,
         *,
         contempt: int | None = None,
+        odds_mode: str | None = None,
     ) -> tuple[str, int]:
         if self.config.engine_kind != "lc0":
             return "none", 0
-        odds_mode = self._effective_odds_mode(board)
+        odds_mode = self._effective_odds_mode(board, odds_mode)
         weights = self._weights_path(board, odds_mode)
         if weights is None or not weights.is_file():
             raise StockfishError(f"LCZero network not found: {weights}")
@@ -347,9 +366,15 @@ class StockfishService:
             "Contempt": str(effective_contempt),
             "ContemptMode": "play",
         }
-        white_has_queen = bool(board.pieces(chess.QUEEN, chess.WHITE))
-        black_has_queen = bool(board.pieces(chess.QUEEN, chess.BLACK))
-        lc0_plays_black = white_has_queen and not black_has_queen
+        white_queens = len(board.pieces(chess.QUEEN, chess.WHITE))
+        black_queens = len(board.pieces(chess.QUEEN, chess.BLACK))
+        if self.config.lc0_auto_network and self._player_color is not None:
+            queen_odds_side = self._player_color
+        elif white_queens != black_queens:
+            queen_odds_side = chess.WHITE if white_queens < black_queens else chess.BLACK
+        else:
+            queen_odds_side = chess.WHITE
+        lc0_plays_black = queen_odds_side == chess.BLACK
         if odds_mode == "queen":
             requested.update({
                 "SwapColors": lc0_plays_black,
@@ -380,10 +405,19 @@ class StockfishService:
                 self.start()
             self._game_token = object()
 
-    def analyse(self, board: chess.Board, revision: int) -> AnalysisResult:
+    def analyse(
+        self,
+        board: chess.Board,
+        revision: int,
+        odds_mode: str | None = None,
+    ) -> AnalysisResult:
         with self._search_lock:
-            engine, game_token = self._engine_for_board(board)
-            odds_mode, effective_contempt = self._prepare_for_board(engine, board)
+            engine, game_token = self._engine_for_board(board, odds_mode)
+            odds_mode, effective_contempt = self._prepare_for_board(
+                engine,
+                board,
+                odds_mode=odds_mode,
+            )
             analysis: chess.engine.SimpleAnalysisResult | None = None
             try:
                 analysis = engine.analysis(
@@ -418,6 +452,7 @@ class StockfishService:
         revision: int,
         publish: Callable[[AnalysisResult], None],
         cancel_generation: int | None = None,
+        odds_mode: str | None = None,
     ) -> None:
         """Analyze until cancelled and publish throttled snapshots of the live search."""
 
@@ -433,10 +468,10 @@ class StockfishService:
             # or delay the newest board.
             if not self._generation_is_current(cancel_generation):
                 return
-            engine, game_token = self._engine_for_board(board)
+            engine, game_token = self._engine_for_board(board, odds_mode)
             if not self._generation_is_current(cancel_generation):
                 return
-            selected_odds_mode = self._effective_odds_mode(board)
+            selected_odds_mode = self._effective_odds_mode(board, odds_mode)
             automatic_contempt = self.config.engine_kind == "lc0" and self.config.lc0_auto_contempt
             # An odds-trained network already models its expected handicap.
             # Raw eval is therefore not a useful auto-contempt signal in that
@@ -446,6 +481,7 @@ class StockfishService:
                 engine,
                 board,
                 contempt=0 if automatic_contempt else None,
+                odds_mode=selected_odds_mode,
             )
             analysis: chess.engine.SimpleAnalysisResult | None = None
             last_signature: tuple[object, ...] | None = None
@@ -496,6 +532,7 @@ class StockfishService:
                         engine,
                         board,
                         contempt=effective_contempt,
+                        odds_mode=selected_odds_mode,
                     )
                     if probe_result is not None:
                         publish(replace(
@@ -633,33 +670,6 @@ def _engine_process_kwargs(path: Path) -> dict[str, object]:
             "startupinfo": startup_info,
         })
     return options
-
-
-def detect_odds_mode(board: chess.Board | None, player_color: chess.Color | None) -> str:
-    """Select an odds network only when the human player's side is deficient.
-
-    Captures suffered by the opponent never trigger an odds network. Equal
-    trades also remain on the normal network.
-    """
-
-    if board is None or player_color is None:
-        return "none"
-    opponent_color = not player_color
-    differences = {
-        piece_type: len(board.pieces(piece_type, player_color)) - len(board.pieces(piece_type, opponent_color))
-        for piece_type in (chess.KNIGHT, chess.ROOK, chess.QUEEN)
-    }
-    queen_difference = differences[chess.QUEEN]
-    knight_difference = differences[chess.KNIGHT]
-    if queen_difference < 0:
-        if knight_difference > 0:
-            return "queen_for_knight"
-        return "queen"
-    if differences[chess.ROOK] < 0:
-        return "rook"
-    if knight_difference < 0:
-        return "knight"
-    return "none"
 
 
 def auto_practical_contempt(score_cp: int | None, mate: int | None) -> int:

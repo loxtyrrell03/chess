@@ -143,6 +143,7 @@ class Transition:
     new_game: bool = False
     moves: tuple[chess.Move, ...] = ()
     message: str = ""
+    provisional: bool = False
 
 
 @dataclass(frozen=True, slots=True)

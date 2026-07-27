@@ -108,6 +108,23 @@ def test_new_analysis_generation_invalidates_queued_work() -> None:
     assert published == []
 
 
+def test_new_analysis_generation_stops_the_active_search() -> None:
+    service = StockfishService(AppConfig())
+
+    class ActiveAnalysis:
+        stopped = False
+
+        def stop(self) -> None:
+            self.stopped = True
+
+    active = ActiveAnalysis()
+    service._active_analysis = active  # type: ignore[assignment]
+
+    service.reserve_analysis()
+
+    assert active.stopped
+
+
 def test_auto_network_detects_current_material_imbalance() -> None:
     board = chess.Board()
     assert detect_odds_mode(board, chess.WHITE) == "none"
@@ -151,18 +168,94 @@ def test_lc0_network_switch_reuses_warm_process() -> None:
     )
     service = StockfishService(config)
     normal_engine = object()
+    t1_engine = object()
     queen_engine = object()
     service._engine = normal_engine  # type: ignore[assignment]
     service.set_player_color(chess.WHITE)
     service._loaded_weights = Path(config.lc0_bt4_weights)
+    service._engine_pool[Path(config.lc0_t1_odds_weights)] = t1_engine  # type: ignore[assignment]
     service._engine_pool[Path(config.lc0_queen_odds_weights)] = queen_engine  # type: ignore[assignment]
-    queen_odds = chess.Board()
-    queen_odds.remove_piece_at(chess.D1)
 
-    selected, _ = service._engine_for_board(queen_odds)
+    # The runtime's confirmed per-page mode is authoritative even if the board
+    # passed here would independently classify differently.
+    selected_t1, _ = service._engine_for_board(chess.Board(), "rook")
+    selected_queen, _ = service._engine_for_board(chess.Board(), "queen")
+    selected_normal, _ = service._engine_for_board(chess.Board(), "none")
 
-    assert selected is queen_engine
-    assert service._engine_pool[Path(config.lc0_bt4_weights)] is normal_engine
+    assert selected_t1 is t1_engine
+    assert selected_queen is queen_engine
+    assert selected_normal is normal_engine
+    assert service._engine_pool[Path(config.lc0_t1_odds_weights)] is t1_engine
+    assert service._engine_pool[Path(config.lc0_queen_odds_weights)] is queen_engine
+
+
+@pytest.mark.parametrize(
+    ("mode", "expected"),
+    [
+        ("none", "normal.pb.gz"),
+        ("knight", "odds.pb.gz"),
+        ("rook", "odds.pb.gz"),
+        ("queen_for_knight", "odds.pb.gz"),
+        ("queen", "queen.pb.gz"),
+    ],
+)
+def test_ui_compatible_modes_map_to_only_the_honestly_available_networks(
+    mode: str,
+    expected: str,
+) -> None:
+    service = StockfishService(
+        AppConfig(
+            engine_kind="lc0",
+            lc0_bt4_weights="normal.pb.gz",
+            lc0_t1_odds_weights="odds.pb.gz",
+            lc0_queen_odds_weights="queen.pb.gz",
+        )
+    )
+
+    assert service._weights_path(chess.Board(), mode) == Path(expected)
+
+
+@pytest.mark.parametrize(
+    ("player_color", "swap_colors"),
+    [
+        (chess.WHITE, False),
+        (chess.BLACK, True),
+    ],
+)
+def test_lqo_color_configuration_follows_the_player_not_queen_presence(
+    tmp_path: Path,
+    player_color: chess.Color,
+    swap_colors: bool,
+) -> None:
+    weights = tmp_path / "queen.pb.gz"
+    weights.touch()
+    service = StockfishService(
+        AppConfig(
+            engine_kind="lc0",
+            lc0_auto_network=True,
+            lc0_queen_odds_weights=str(weights),
+        )
+    )
+    service.set_player_color(player_color)
+    fake = FakeUciEngine()
+    fake.options.update({
+        name: object()
+        for name in ("SwapColors", "ScLimit", "CPuct", "FpuValue", "DrawScore")
+    })
+    promoted_position = chess.Board()
+    promoted_position.set_piece_at(
+        chess.A4,
+        chess.Piece(chess.QUEEN, not player_color),
+    )
+
+    mode, _ = service._prepare_for_board(
+        fake,  # type: ignore[arg-type]
+        promoted_position,
+        odds_mode="queen",
+    )
+
+    assert mode == "queen"
+    assert fake.configured["SwapColors"] is swap_colors
 
 
 @pytest.mark.parametrize(
@@ -231,6 +324,45 @@ def test_lc0_auto_modes_publish_effective_choices() -> None:
         assert results
         assert results[0].odds_mode == "none"
         assert results[0].effective_contempt == 0
+    finally:
+        engine.stop()
+
+
+@pytest.mark.skipif(not default_lc0_paths()["engine"].exists(), reason="LCZero is not installed")
+@pytest.mark.parametrize(
+    ("mode", "missing_square", "weights_key"),
+    [
+        ("rook", chess.A1, "odds"),
+        ("queen", chess.D1, "queen_odds"),
+    ],
+)
+def test_lc0_odds_network_real_engine_smoke(
+    mode: str,
+    missing_square: chess.Square,
+    weights_key: str,
+) -> None:
+    paths = default_lc0_paths()
+    board = chess.Board()
+    board.remove_piece_at(missing_square)
+    config = AppConfig(
+        engine_kind="lc0",
+        odds_mode=mode,
+        think_time_ms=100,
+        threads=2,
+        lc0_path=str(paths["engine"]),
+        lc0_bt4_weights=str(paths["strongest"]),
+        lc0_t1_odds_weights=str(paths["odds"]),
+        lc0_queen_odds_weights=str(paths["queen_odds"]),
+    )
+    engine = StockfishService(config)
+    engine.set_player_color(chess.WHITE)
+    try:
+        engine.start(board, mode)
+        result = engine.analyse(board, revision=12, odds_mode=mode)
+
+        assert result.best_move in board.legal_moves
+        assert result.odds_mode == mode
+        assert engine._loaded_weights == Path(paths[weights_key])
     finally:
         engine.stop()
 

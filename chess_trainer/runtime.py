@@ -13,8 +13,9 @@ from websockets.asyncio.server import ServerConnection
 
 from .bridge import BridgeServer
 from .config import AppConfig
-from .engine import StockfishError, StockfishService, detect_odds_mode
+from .engine import StockfishError, StockfishService
 from .events import AppEvent
+from .material import detect_odds_mode
 from .models import AnalysisResult, Orientation, Snapshot, SyncState
 from .policy import PageMode, PolicyDecision, classify_page, site_label
 from .reconcile import GameReconciler, piece_map
@@ -28,6 +29,7 @@ class AnalysisGuard:
     game_key: str
     position_hash: str
     fen: str
+    odds_mode: str = "none"
 
 
 class RuntimeController:
@@ -47,7 +49,7 @@ class RuntimeController:
         self._snapshots: dict[str, Snapshot] = {}
         self._decisions: dict[str, PolicyDecision] = {}
         self._analysis_tasks: dict[str, asyncio.Task[None]] = {}
-        self._analysed_revision: dict[str, tuple[int, str]] = {}
+        self._analysed_revision: dict[str, tuple[int, str, str]] = {}
         self._effective_odds_modes: dict[str, str] = {}
         self._sync_states: dict[str, SyncState] = {}
         self._active_page: str | None = None
@@ -166,7 +168,8 @@ class RuntimeController:
         self._decisions[snapshot.page_id] = decision
         tracker = self._trackers.setdefault(snapshot.page_id, GameReconciler())
         transition = tracker.ingest(snapshot)
-        self._sync_states[snapshot.page_id] = transition.state
+        effective_sync_state = SyncState.TRANSIENT if transition.provisional else transition.state
+        self._sync_states[snapshot.page_id] = effective_sync_state
         if transition.new_game:
             self._effective_odds_modes.pop(snapshot.page_id, None)
         reconciled_moves = _san_history(transition.board) if transition.board else ()
@@ -178,7 +181,7 @@ class RuntimeController:
             "Position reconciliation: page=%s seq=%s sync=%s revision=%s board_plies=%s detected_moves=%s detail=%s",
             snapshot.page_id,
             snapshot.seq,
-            transition.state.value,
+            effective_sync_state.value,
             transition.revision,
             len(transition.board.move_stack) if transition.board else 0,
             len(snapshot.moves),
@@ -191,20 +194,12 @@ class RuntimeController:
             self._engine.set_player_color(player_color)
         orientation = snapshot.orientation.value.title()
         player_text = chess.COLOR_NAMES[player_color].title() if player_color is not None else "Unknown"
-        provisional_lichess_frame = (
-            site == "Lichess"
-            and bool(snapshot.moves)
-            and transition.message == "Recovered from observed board placement"
+        effective_odds_mode = self._effective_odds_mode_for(
+            snapshot.page_id,
+            transition.board,
+            player_color,
+            confirmed=effective_sync_state is SyncState.SYNCHRONIZED,
         )
-        if self.config.engine_kind == "lc0" and self.config.lc0_auto_network:
-            detected_odds_mode = detect_odds_mode(transition.board, player_color)
-            if provisional_lichess_frame:
-                effective_odds_mode = self._effective_odds_modes.get(snapshot.page_id, "none")
-            else:
-                effective_odds_mode = detected_odds_mode
-                self._effective_odds_modes[snapshot.page_id] = detected_odds_mode
-        else:
-            effective_odds_mode = self.config.odds_mode
         self._emit(
             "position",
             transition.message or transition.state.value,
@@ -214,7 +209,7 @@ class RuntimeController:
             policy_reason=decision.reason,
             can_analyze=decision.can_analyze,
             can_execute=decision.can_execute,
-            sync=transition.state.value,
+            sync=effective_sync_state.value,
             revision=transition.revision,
             game_key=snapshot.game_key,
             orientation=orientation,
@@ -233,7 +228,7 @@ class RuntimeController:
                     "positionHash": snapshot.position_hash,
                     "fen": transition.board.fen() if transition.board else "",
                     "moves": display_moves,
-                    "sync": transition.state.value,
+                    "sync": effective_sync_state.value,
                     "orientation": snapshot.orientation.value,
                     "playerColor": player_text,
                     "site": site,
@@ -259,10 +254,9 @@ class RuntimeController:
 
         if not self.config.monitoring or not decision.can_analyze:
             return
-        if provisional_lichess_frame:
-            # Chessground briefly removes a captured piece before placing the
-            # mover. Wait for the following history-consistent snapshot rather
-            # than switching networks or analyzing that animation frame.
+        if transition.provisional:
+            # A first-attachment DOM placement has no legal/history proof yet.
+            # Keep the cached network and wait for a synchronized confirmation.
             self._cancel_page_analysis(snapshot.page_id)
             return
         if transition.state is not SyncState.SYNCHRONIZED:
@@ -282,10 +276,38 @@ class RuntimeController:
         if not analysis_workspace and transition.board.turn != player_color and not self.config.analyze_opponent:
             self._cancel_page_analysis(snapshot.page_id)
             return
-        analysis_identity = (transition.revision, snapshot.position_hash)
+        analysis_identity = (transition.revision, snapshot.position_hash, effective_odds_mode)
         if self._analysed_revision.get(snapshot.page_id) == analysis_identity:
             return
-        self._schedule_analysis(snapshot.page_id, transition.revision, transition.board.copy(stack=True))
+        self._schedule_analysis(
+            snapshot.page_id,
+            transition.revision,
+            transition.board.copy(stack=True),
+            effective_odds_mode,
+        )
+
+    def _effective_odds_mode_for(
+        self,
+        page_id: str,
+        board: chess.Board | None,
+        player_color: chess.Color | None,
+        *,
+        confirmed: bool,
+    ) -> str:
+        """Return one per-page decision shared by dashboard and engine.
+
+        Only a confirmed reconciled position may update the cache. Provisional
+        DOM-only frames retain the last effective mode, preventing a renderer
+        animation from selecting a process that no legal position requested.
+        """
+
+        if self.config.engine_kind != "lc0" or not self.config.lc0_auto_network:
+            return self.config.odds_mode
+        if not confirmed:
+            return self._effective_odds_modes.get(page_id, "none")
+        effective = detect_odds_mode(board, player_color)
+        self._effective_odds_modes[page_id] = effective
+        return effective
 
     def _cancel_page_analysis(self, page_id: str) -> None:
         task = self._analysis_tasks.get(page_id)
@@ -293,20 +315,33 @@ class RuntimeController:
             self._engine.cancel()
             task.cancel()
 
-    def _schedule_analysis(self, page_id: str, revision: int, board: chess.Board) -> None:
+    def _schedule_analysis(
+        self,
+        page_id: str,
+        revision: int,
+        board: chess.Board,
+        odds_mode: str | None = None,
+    ) -> None:
         existing = self._analysis_tasks.get(page_id)
         engine_generation = self._engine.reserve_analysis()
         if existing and not existing.done():
             existing.cancel()
         snapshot = self._snapshots.get(page_id)
-        self._analysed_revision[page_id] = (revision, snapshot.position_hash if snapshot else "")
+        if odds_mode is None:
+            odds_mode = self._effective_odds_modes.get(page_id, self.config.odds_mode)
+        self._analysed_revision[page_id] = (
+            revision,
+            snapshot.position_hash if snapshot else "",
+            odds_mode,
+        )
         guard = None if snapshot is None else AnalysisGuard(
             game_key=snapshot.game_key,
             position_hash=snapshot.position_hash,
             fen=board.fen(),
+            odds_mode=odds_mode,
         )
         self._analysis_tasks[page_id] = asyncio.create_task(
-            self._analyse(page_id, revision, board, guard, engine_generation)
+            self._analyse(page_id, revision, board, guard, engine_generation, odds_mode)
         )
 
     async def _analyse(
@@ -316,6 +351,7 @@ class RuntimeController:
         board: chess.Board,
         guard: AnalysisGuard | None = None,
         engine_generation: int | None = None,
+        odds_mode: str | None = None,
     ) -> None:
         engine_name = getattr(self._engine, "name", "Chess engine")
         self._emit("analysis", f"{engine_name} is thinking…", thinking=True, revision=revision)
@@ -334,6 +370,7 @@ class RuntimeController:
                     board,
                     revision,
                     engine_generation,
+                    odds_mode,
                 )
                 if preview is not None:
                     await self._publish_live_analysis(page_id, revision, board, guard, preview)
@@ -343,6 +380,7 @@ class RuntimeController:
                 revision,
                 publish,
                 engine_generation,
+                odds_mode,
             )
         except asyncio.CancelledError:
             return
@@ -370,7 +408,9 @@ class RuntimeController:
                 and snapshot.focused
                 and page_id == self._active_page
             ):
-                self._schedule_analysis(page_id, revision, board.copy(stack=True))
+                current_mode = self._effective_odds_modes.get(page_id, self.config.odds_mode)
+                if guard is None or current_mode == guard.odds_mode:
+                    self._schedule_analysis(page_id, revision, board.copy(stack=True), current_mode)
 
     async def _fallback_to_stockfish(self, failure: StockfishError) -> bool:
         """Keep analysis available if LCZero's CUDA process terminates."""
@@ -418,6 +458,11 @@ class RuntimeController:
             snapshot.game_key != guard.game_key
             or snapshot.position_hash != guard.position_hash
             or board.fen() != guard.fen
+            or (
+                self.config.engine_kind == "lc0"
+                and self.config.lc0_auto_network
+                and self._effective_odds_modes.get(page_id, "none") != guard.odds_mode
+            )
         ):
             return
         if snapshot.pieces and snapshot.pieces != piece_map(board):
@@ -477,7 +522,10 @@ class RuntimeController:
                     "evaluation": _white_evaluation_text(result, board),
                     "pv": " ".join(result.pv_san),
                 }],
-                "oddsMode": result.odds_mode or self.config.odds_mode,
+                "oddsMode": result.odds_mode or self._effective_odds_modes.get(
+                    page_id,
+                    self.config.odds_mode,
+                ),
                 "effectiveContempt": result.effective_contempt,
                 "lc0AutoNetwork": self.config.lc0_auto_network,
                 "lc0AutoContempt": self.config.lc0_auto_contempt,
@@ -577,8 +625,28 @@ class RuntimeController:
             if not page_id or not tracker or not tracker.board or not decision or not decision.can_analyze:
                 self._emit("warning", "No synchronized training position is active")
                 return
+            if self._sync_states.get(page_id) is not SyncState.SYNCHRONIZED:
+                self._emit("warning", "Waiting for a history-consistent board position")
+                return
+            snapshot = self._snapshots.get(page_id)
+            player_color = (
+                None
+                if decision.mode is PageMode.ANALYSIS or snapshot is None
+                else _player_color(snapshot)
+            )
+            effective_odds_mode = self._effective_odds_mode_for(
+                page_id,
+                tracker.board,
+                player_color,
+                confirmed=self._sync_states.get(page_id) is SyncState.SYNCHRONIZED,
+            )
             self._analysed_revision.pop(page_id, None)
-            self._schedule_analysis(page_id, tracker.revision, tracker.board.copy(stack=True))
+            self._schedule_analysis(
+                page_id,
+                tracker.revision,
+                tracker.board.copy(stack=True),
+                effective_odds_mode,
+            )
 
         self._call(schedule)
 
@@ -594,6 +662,7 @@ class RuntimeController:
                 task.cancel()
             self._trackers.pop(page_id, None)
             self._analysed_revision.pop(page_id, None)
+            self._effective_odds_modes.pop(page_id, None)
             self._sync_states.pop(page_id, None)
             client = self._clients.get(page_id)
             if client and self._bridge:
@@ -705,6 +774,8 @@ class RuntimeController:
             self.config.lc0_auto_network = lc0_auto_network
         if lc0_auto_contempt is not None:
             self.config.lc0_auto_contempt = lc0_auto_contempt
+        if engine_kind is not None or odds_mode is not None or lc0_auto_network is not None:
+            self._effective_odds_modes.clear()
         self.config.save()
         try:
             name = await asyncio.to_thread(self._engine.start)

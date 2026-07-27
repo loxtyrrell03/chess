@@ -53,6 +53,37 @@ Search limit: none; the current principal variation is streamed while the positi
 
 The engine keeps refining the current position until the board changes. MultiPV always publishes the selected number of ranked engine lines; alternative arrows follow the En Croissant fork's win-chance-based width thresholds and use progressively lower opacity. LCZero uses the CUDA FP16 backend on the NVIDIA GPU for faster first results. Sixteen Stockfish threads is available as a dedicated-CPU setting, but 14 keeps the browser and Windows responsive.
 
+### Automatic LCZero network mapping
+
+Automatic selection measures the human player's **net physical material deficit**
+from the live piece counts using conventional values (pawn 1, knight/bishop 3,
+rook 5, queen 9). Material captured from the opponent is compensation, so equal
+trades, being ahead, being down one or two pawns, and being down only the
+exchange remain on normal BT4. The available networks are deliberately treated
+as coarse handicap bands:
+
+| Player-relative net deficit | Dashboard mode | LCZero network |
+| --- | --- | --- |
+| Less than 3 points | Normal | BT4 |
+| 3 to less than 5 | Minor-equivalent (`knight`) | T1 odds |
+| 5 to less than 6 | Rook-equivalent (`rook`) | T1 odds |
+| 6 to less than 8 | Queen-for-minor equivalent (`queen_for_knight`) | T1 odds |
+| 8 or more, with a genuine queen-count deficit | Near-full queen odds (`queen`) | LQO v2 |
+| 8 or more without a queen-count deficit | Highest T1 equivalent (`queen_for_knight`) | T1 odds |
+
+The legacy mode identifiers remain unchanged for dashboard/config
+compatibility; “equivalent” is important because three pawns, a bishop, and
+other combinations can occupy the same band. Promotions and underpromotions
+are naturally included by recounting the pieces in every confirmed position.
+LQO is never selected merely because several non-queen pieces add up to nine
+points.
+
+Network changes are accepted immediately for positions confirmed by legal move
+reconciliation, move history, or a declared FEN. A DOM-only fallback placement
+is provisional: analysis is cancelled, the last confirmed per-page mode remains
+published, and neither Chess.com nor Lichess animation frames can select a new
+LCZero process.
+
 ## Install the browser extension
 
 1. Open `chrome://extensions` or `edge://extensions`.
