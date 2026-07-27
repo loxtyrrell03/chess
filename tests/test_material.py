@@ -157,3 +157,52 @@ def test_recent_live_positions_follow_compensation_and_endgame_composition(
     expected: str,
 ) -> None:
     assert detect_odds_mode(chess.Board(fen), player_color) == expected
+
+
+@pytest.mark.parametrize(
+    ("game", "player_color", "timeline"),
+    [
+        (
+            "c0jHLa8L",
+            chess.BLACK,
+            [
+                ("rnb1kbnr/pp1ppppp/2p5/8/3P4/N1P5/PP1BPPPP/R2QKBNR b KQkq - 0 4", "queen"),
+                ("r1b1kbnr/pp2pp2/2p3p1/4n2p/3P4/2PB4/PPNB1PPP/R2Q1RK1 w q - 0 12", "queen_for_knight"),
+                ("r1b1kbnr/pp2pp2/2p3p1/4P2p/8/2PB4/PPNB1PPP/R2Q1RK1 b q - 0 12", "queen"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1bP2/2P1B3/P2r2rP/3R1K2 w - - 0 25", "none"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1bP2/2P5/P2B2rP/3R1K2 b - - 0 25", "queen_for_knight"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1bP2/2P5/P2r4/4RK2 w - - 0 27", "none"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1RP2/2P5/P2r4/5K2 b - - 0 27", "queen_for_knight"),
+                ("4k3/pp2bp2/2p1p3/4P2p/1PQ1pP2/2P5/P2r4/5K2 w - - 0 28", "none"),
+                ("4k3/1p2bp2/2p1p3/r7/7p/2P4Q/2K5/8 w - - 0 39", "none"),
+            ],
+        ),
+        (
+            "wKVCC10C",
+            chess.WHITE,
+            [
+                ("r1bqk1nr/ppppppbp/n5p1/8/8/2P5/PP1PPPPP/RNB1KBNR w KQkq - 0 4", "queen"),
+                ("r2qk1nr/p3ppbp/Bp1p2p1/8/4b2P/2P5/PP1P1PP1/RNB1K1N1 b Qkq - 0 9", "queen_for_knight"),
+                ("r2q1k1r/p3pp2/1p1p1n2/1B5p/3P4/2P1b3/PP1N1Pp1/2K3R1 w - - 0 20", "queen"),
+                ("r2q1k1r/p3pp2/1p1p1n2/1B5p/3P4/2P1P3/PP1N2p1/2K3R1 b - - 0 20", "queen_for_knight"),
+                ("2r5/p3kpr1/1p2pN2/3p4/3P4/2P1P2p/PP1KB1p1/6R1 b - - 0 30", "none"),
+                ("2r5/p3kpr1/1p6/3p4/3P4/2P1P3/PP1KB1pp/6R1 w - - 0 32", "knight"),
+                ("2r5/p3kpr1/1p6/3p4/3P4/2P1P3/PP1KB1Rp/8 b - - 0 32", "none"),
+                ("2r5/p3kp2/1p6/3p4/3P4/2P1P3/PP1KB1rp/8 w - - 0 33", "queen_for_knight"),
+                ("2r5/p3kp2/1p6/3p4/3PP3/2P5/PP2K2p/8 b - - 0 34", "rook"),
+                ("2r5/p3kp2/1p6/8/3Pp3/2P5/PP2K2p/8 w - - 0 35", "queen_for_knight"),
+            ],
+        ),
+    ],
+)
+def test_latest_games_recover_and_reverse_without_sticky_modes(
+    game: str,
+    player_color: chess.Color,
+    timeline: list[tuple[str, str]],
+) -> None:
+    observed = [
+        detect_odds_mode(chess.Board(fen), player_color)
+        for fen, _expected in timeline
+    ]
+
+    assert observed == [expected for _fen, expected in timeline], game
