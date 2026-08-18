@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Local Chess Training Bridge",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "description": "Adds a local Stockfish/LCZero dashboard, best-move arrow, and eval bar to Chess.com and Lichess.",
   "minimum_chrome_version": "116",
   "permissions": [

@@ -7,6 +7,7 @@
   const STABILITY_RECHECK_MS = 55;
   const URL_POLL_MS = 300;
   const MAX_MOVES = 700;
+  const MAX_MOVE_LIST_CANDIDATES = 40;
   const STANDARD_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
   const ALLOWED_HOSTS = new Set(["chess.com", "www.chess.com", "lichess.org", "www.lichess.org"]);
   const FILES = "abcdefgh";
@@ -58,6 +59,9 @@
     "[class*='move-list' i]",
     "[class*='movelist' i]"
   ];
+  const BOARD_SELECTOR_TEXT = BOARD_SELECTORS.join(",");
+  const MOVE_LIST_SELECTOR_TEXT = MOVE_LIST_SELECTORS.join(",");
+  const EXTENSION_OWNED_SELECTOR = "#chess-trainer-dashboard-host, [data-chess-trainer-owned]";
 
   let port = null;
   let reconnectTimer = null;
@@ -69,6 +73,7 @@
   let lastEmittedKey = "";
   let currentSnapshot = null;
   let currentBoard = null;
+  let currentMoveRoot = null;
   let currentArrowCommand = null;
   let lastEvaluationCommand = null;
   let arrowOverlay = null;
@@ -441,7 +446,10 @@
 
   function scoreMoveList(element, board) {
     if (!isVisible(element)) return Number.NEGATIVE_INFINITY;
-    const text = element.innerText || element.textContent || "";
+    // innerText forces a style/layout calculation. This runs after board
+    // mutations, so using it across many Lichess nodes can monopolize the UI
+    // thread. Move-list text does not need rendered whitespace semantics.
+    const text = element.textContent || "";
     const sans = sansFromText(text);
     const rect = element.getBoundingClientRect();
     let score = sans.length * 6;
@@ -458,14 +466,13 @@
   }
 
   function findMoveList(board) {
+    if (currentMoveRoot?.isConnected && scoreMoveList(currentMoveRoot, board) >= 10) return currentMoveRoot;
+
+    // Do not fall back to every descendant of .round__app. On a live Lichess
+    // page that turned each clock or animation mutation into hundreds of
+    // repeated text reads (and repeated SAN parsing of the same subtrees).
     const candidates = MOVE_LIST_SELECTORS.flatMap((selector) => queryAllSafe(document, selector));
-    if (siteLabel() === "Lichess") {
-      candidates.push(...queryAllSafe(document, ".round__app *").filter((element) => {
-        const text = element.innerText || element.textContent || "";
-        return text.length <= 20_000 && sansFromText(text).length > 0;
-      }));
-    }
-    const uniqueCandidates = uniqueElements(candidates);
+    const uniqueCandidates = uniqueElements(candidates).slice(0, MAX_MOVE_LIST_CANDIDATES);
     let best = null;
     let bestScore = Number.NEGATIVE_INFINITY;
     for (const element of uniqueCandidates) {
@@ -494,10 +501,25 @@
     return Array.from(byPly.entries()).sort((a, b) => a[0] - b[0]).map(([, san]) => san).slice(0, MAX_MOVES);
   }
 
+  function movesFromLichessNodes(root) {
+    if (!root || siteLabel() !== "Lichess") return [];
+    // Lichess's round replay renders SAN plies as <z7yx> elements inside
+    // <i5d>. Reading those leaves layout untouched and preserves token
+    // boundaries that textContent on the whole custom-element grid loses.
+    return queryAllSafe(root, "z7yx")
+      .map((node) => normalizeSanToken(node.textContent))
+      .filter(Boolean)
+      .slice(0, MAX_MOVES);
+  }
+
   function extractMoves(root) {
     const attributed = movesFromAttributedNodes(root);
+    const lichess = movesFromLichessNodes(root);
+    // This is one already-selected move-list node, not the old page-wide
+    // descendant walk. Keep rendered whitespace as the generic fallback for
+    // sites whose move elements do not carry attributes.
     const textMoves = root ? sansFromText(root.innerText || root.textContent || "") : [];
-    const sans = attributed.length >= textMoves.length ? attributed : textMoves;
+    const sans = [attributed, lichess, textMoves].reduce((best, moves) => moves.length > best.length ? moves : best, []);
     return sans.map((san, index) => ({ ply: index + 1, san }));
   }
 
@@ -556,7 +578,7 @@
   }
 
   function gameResult(moveRoot) {
-    const text = `${moveRoot?.innerText || ""} ${document.querySelector("#game-over-modal")?.innerText || ""}`;
+    const text = `${moveRoot?.textContent || ""} ${document.querySelector("#game-over-modal")?.textContent || ""}`;
     if (/\b1\/2-1\/2\b/.test(text)) return "1/2-1/2";
     if (/\b1-0\b/.test(text)) return "1-0";
     if (/\b0-1\b/.test(text)) return "0-1";
@@ -632,6 +654,8 @@
     const pieces = extractPieces(board, orientation);
     const lichessState = lichessInitialState(pieces.placement_fen);
     const moveRoot = findMoveList(board);
+    currentMoveRoot = moveRoot;
+    refreshTrackedObservation(board, moveRoot);
     const domMoves = extractMoves(moveRoot);
     const initialMoves = (lichessState?.moves || []).map((san, index) => ({ ply: index + 1, san }));
     const moves = domMoves.length >= initialMoves.length ? domMoves : initialMoves;
@@ -887,6 +911,7 @@
     if (dashboard?.host?.isConnected) return;
     const host = document.createElement("div");
     host.id = "chess-trainer-dashboard-host";
+    host.setAttribute("data-chess-trainer-owned", "dashboard");
     Object.assign(host.style, {
       position: "fixed",
       zIndex: "2147483645",
@@ -1303,6 +1328,7 @@
     const barWidth = 25;
     const evalBar = document.createElement("div");
     evalBar.setAttribute("aria-hidden", "true");
+    evalBar.setAttribute("data-chess-trainer-owned", "evaluation");
     Object.assign(evalBar.style, {
       position: "fixed", left: `${Math.max(2, rect.left - barWidth - 7)}px`, top: `${rect.top}px`,
       width: `${barWidth}px`, height: `${rect.height}px`, overflow: "hidden", borderRadius: "2px",
@@ -1348,6 +1374,7 @@
     lastMoveCount = 0;
     currentSnapshot = null;
     currentBoard = null;
+    currentMoveRoot = null;
     scheduleScan();
   }
 
@@ -1454,6 +1481,7 @@
     const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", `0 0 ${rect.width} ${rect.height}`);
     svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("data-chess-trainer-owned", "arrows");
     Object.assign(svg.style, {
       position: "fixed",
       left: `${rect.left}px`,
@@ -1739,7 +1767,86 @@
     }
   }
 
-  const observer = new MutationObserver(scheduleScan);
+  function elementForNode(node) {
+    if (node instanceof Element) return node;
+    return node?.parentElement || null;
+  }
+
+  function isExtensionOwnedNode(node) {
+    const element = elementForNode(node);
+    return Boolean(element?.closest(EXTENSION_OWNED_SELECTOR));
+  }
+
+  function nodeTouchesRoot(node, root) {
+    const element = elementForNode(node);
+    return Boolean(root && element && (element === root || root.contains(element) || element.contains(root)));
+  }
+
+  function nodeContainsSelector(node, selector) {
+    const element = elementForNode(node);
+    if (!element) return false;
+    try {
+      return element.matches(selector) || Boolean(element.querySelector(selector));
+    } catch {
+      return false;
+    }
+  }
+
+  function mutationAffectsChessState(mutation) {
+    if (isExtensionOwnedNode(mutation.target)) return false;
+    if (!currentBoard && !currentMoveRoot) return true;
+    if (nodeTouchesRoot(mutation.target, currentBoard) || nodeTouchesRoot(mutation.target, currentMoveRoot)) return true;
+
+    const target = elementForNode(mutation.target);
+    if (target?.id === "page-init-data" || target?.closest("#page-init-data")) return true;
+
+    if (mutation.type === "attributes") {
+      // Class/style churn elsewhere on Lichess is mostly clocks, menus and
+      // animations. State-bearing attributes remain relevant anywhere.
+      return !["class", "style", "aria-label"].includes(mutation.attributeName || "");
+    }
+
+    if (mutation.type !== "childList") return false;
+    const changedNodes = [...mutation.addedNodes, ...mutation.removedNodes];
+    return changedNodes.some((node) => {
+      if (isExtensionOwnedNode(node)) return false;
+      return nodeTouchesRoot(node, currentBoard)
+        || nodeTouchesRoot(node, currentMoveRoot)
+        || nodeContainsSelector(node, "#page-init-data")
+        || nodeContainsSelector(node, BOARD_SELECTOR_TEXT)
+        || nodeContainsSelector(node, MOVE_LIST_SELECTOR_TEXT);
+    });
+  }
+
+  const observer = new MutationObserver((mutations) => {
+    if (mutations.some(mutationAffectsChessState)) scheduleScan();
+  });
+  let observedBoard = null;
+  let observedMoveRoot = null;
+  let observedInitData = null;
+  const trackedObserver = new MutationObserver(() => scheduleScan());
+
+  function refreshTrackedObservation(board, moveRoot) {
+    const initData = document.getElementById("page-init-data");
+    if (board === observedBoard && moveRoot === observedMoveRoot && initData === observedInitData) return;
+    trackedObserver.disconnect();
+    observedBoard = board;
+    observedMoveRoot = moveRoot;
+    observedInitData = initData;
+    const targets = uniqueElements([board, moveRoot, initData]);
+    for (const target of targets) {
+      trackedObserver.observe(target, {
+        subtree: true,
+        characterData: true,
+        attributes: true,
+        attributeFilter: [
+          "class", "style", "data-square", "data-piece", "data-fen", "data-orientation",
+          "data-flipped", "data-coordinates", "data-game-id", "aria-label"
+        ]
+      });
+    }
+  }
+
   function startObservation() {
     if (!document.documentElement) {
       setTimeout(startObservation, 50);
@@ -1747,13 +1854,7 @@
     }
     observer.observe(document.documentElement, {
       subtree: true,
-      childList: true,
-      characterData: true,
-      attributes: true,
-      attributeFilter: [
-        "class", "style", "data-square", "data-piece", "data-fen", "data-orientation",
-        "data-flipped", "data-coordinates", "data-game-id", "aria-label"
-      ]
+      childList: true
     });
     ensureDashboard();
     scheduleScan();
