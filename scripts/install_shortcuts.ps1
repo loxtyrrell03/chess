@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [switch]$DesktopShortcut
+    [switch]$DesktopShortcut,
+    [switch]$EnableAutoStart
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,3 +43,9 @@ if ($DesktopShortcut) {
 
 Write-Host "Start menu shortcut installed: $shortcutPath"
 Write-Host 'Open it once to place the tray icon in the taskbar notification area. You can also right-click the Start shortcut and choose Pin to taskbar.'
+
+if ($EnableAutoStart) {
+    & (Join-Path $PSScriptRoot 'install_autostart.ps1')
+} else {
+    Write-Host 'Automatic sign-in startup is off. Open Chess Trainer only when you want to use the extension.'
+}
