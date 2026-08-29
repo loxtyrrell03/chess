@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "chess-trainer-control-centre"
+version = "2.0.0"
+description = "A local Stockfish-powered training control centre for Chess.com computer and analysis modes."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "chess>=1.11.2",
+  "PySide6>=6.8",
+  "websockets>=14",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.25",
+  "pyinstaller>=6.11",
+]
+
+[project.scripts]
+chess-trainer = "chess_trainer.app:main"
+
+[tool.setuptools.packages.find]
+include = ["chess_trainer*"]
+
+[tool.setuptools.package-data]
+chess_trainer = ["resources/*.svg"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+

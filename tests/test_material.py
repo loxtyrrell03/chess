@@ -1,0 +1,298 @@
+from __future__ import annotations
+
+import chess
+import pytest
+
+from chess_trainer.material import (
+    assess_material,
+    detect_odds_mode,
+    explain_material_assessment,
+    odds_mode_label,
+)
+
+
+FULL = "PPPPPPPPNNBBRRQ"
+
+
+def without(pieces: str, removed: str) -> str:
+    for symbol in removed:
+        pieces = pieces.replace(symbol, "", 1)
+    return pieces
+
+
+def promoted(pieces: str, promotion: str) -> str:
+    return without(pieces, "P") + promotion
+
+
+def material_board(
+    player_pieces: str,
+    opponent_pieces: str,
+    player_color: chess.Color,
+) -> chess.Board:
+    board = chess.Board.empty()
+    board.set_piece_at(chess.E1, chess.Piece(chess.KING, chess.WHITE))
+    board.set_piece_at(chess.E8, chess.Piece(chess.KING, chess.BLACK))
+    available = [square for square in chess.SQUARES if square not in {chess.E1, chess.E8}]
+    by_color = {
+        player_color: player_pieces,
+        not player_color: opponent_pieces,
+    }
+    for color, pieces in by_color.items():
+        for symbol in pieces:
+            square = available.pop(0) if color == chess.WHITE else available.pop()
+            board.set_piece_at(square, chess.Piece.from_symbol(symbol if color == chess.WHITE else symbol.lower()))
+    return board
+
+
+@pytest.mark.parametrize("player_color", [chess.WHITE, chess.BLACK], ids=["white-player", "black-player"])
+@pytest.mark.parametrize(
+    ("case", "player_pieces", "opponent_pieces", "deficit_cp", "expected"),
+    [
+        ("equal material", FULL, FULL, 0, "none"),
+        ("equal trades", without(FULL, "QRBP"), without(FULL, "QRBP"), 0, "none"),
+        ("opponent loss only", FULL, without(FULL, "Q"), 0, "none"),
+        ("one pawn", without(FULL, "P"), FULL, 100, "none"),
+        ("two pawns", without(FULL, "PP"), FULL, 200, "none"),
+        ("three pawns", without(FULL, "PPP"), FULL, 300, "knight"),
+        ("full knight", without(FULL, "N"), FULL, 300, "knight"),
+        ("full bishop", without(FULL, "B"), FULL, 300, "knight"),
+        ("minor for one pawn", without(FULL, "N"), without(FULL, "P"), 200, "knight"),
+        ("minor for two pawns", without(FULL, "N"), without(FULL, "PP"), 100, "none"),
+        ("bishop versus knight", without(FULL, "B"), without(FULL, "N"), 0, "none"),
+        ("exchange rook for minor", without(FULL, "R"), without(FULL, "N"), 200, "none"),
+        ("rook versus two minors", without(FULL, "NN"), without(FULL, "R"), 100, "none"),
+        ("full rook", without(FULL, "R"), FULL, 500, "rook"),
+        ("rook for one pawn", without(FULL, "R"), without(FULL, "P"), 400, "rook"),
+        ("rook for two pawns", without(FULL, "R"), without(FULL, "PP"), 300, "rook"),
+        ("queen for rook", without(FULL, "Q"), without(FULL, "R"), 400, "queen_for_knight"),
+        ("queen for knight", without(FULL, "Q"), without(FULL, "N"), 600, "queen_for_knight"),
+        ("queen for bishop", without(FULL, "Q"), without(FULL, "B"), 600, "queen_for_knight"),
+        ("queen for bishop and pawn", without(FULL, "Q"), without(FULL, "BP"), 500, "queen_for_knight"),
+        ("queen for bishop and two pawns", without(FULL, "Q"), without(FULL, "BPP"), 400, "queen_for_knight"),
+        ("queen for bishop and three pawns", without(FULL, "Q"), without(FULL, "BPPP"), 300, "queen_for_knight"),
+        ("queen for bishop and four pawns", without(FULL, "Q"), without(FULL, "BPPPP"), 200, "none"),
+        ("queen for rook and minor", without(FULL, "Q"), without(FULL, "RN"), 100, "none"),
+        ("queen for two pawns", without(FULL, "Q"), without(FULL, "PP"), 700, "queen_for_knight"),
+        ("queen for one pawn", without(FULL, "Q"), without(FULL, "P"), 800, "queen"),
+        ("full queen", without(FULL, "Q"), FULL, 900, "queen"),
+        ("multiple losses with queen trade", without(FULL, "QR"), without(FULL, "Q"), 500, "rook"),
+        ("large non-queen deficit", without(FULL, "RBP"), FULL, 900, "queen_for_knight"),
+        ("opponent queen promotion", FULL, promoted(FULL, "Q"), 800, "queen"),
+        ("opponent rook underpromotion", FULL, promoted(FULL, "R"), 400, "rook"),
+        ("opponent knight underpromotion", FULL, promoted(FULL, "N"), 200, "knight"),
+        ("player promotion advantage", promoted(FULL, "Q"), FULL, 0, "none"),
+    ],
+)
+def test_material_odds_bands_cover_composition_and_compensation(
+    case: str,
+    player_pieces: str,
+    opponent_pieces: str,
+    deficit_cp: int,
+    expected: str,
+    player_color: chess.Color,
+) -> None:
+    board = material_board(player_pieces, opponent_pieces, player_color)
+
+    assessment = assess_material(board, player_color)
+
+    assert assessment is not None, case
+    assert assessment.deficit_cp == deficit_cp, case
+    assert assessment.odds_mode == expected, case
+    assert detect_odds_mode(board, player_color) == expected, case
+
+
+def test_unknown_player_side_never_selects_an_odds_network() -> None:
+    board = material_board(without(FULL, "Q"), FULL, chess.WHITE)
+
+    assert assess_material(board, None) is None
+    assert detect_odds_mode(board, None) == "none"
+
+
+def test_assessment_exposes_gross_loss_and_exchange_compensation() -> None:
+    exchange = material_board(without(FULL, "R"), without(FULL, "N"), chess.WHITE)
+    minor_for_pawn = material_board(without(FULL, "B"), without(FULL, "P"), chess.WHITE)
+
+    exchange_assessment = assess_material(exchange, chess.WHITE)
+    minor_assessment = assess_material(minor_for_pawn, chess.WHITE)
+
+    assert exchange_assessment is not None
+    assert exchange_assessment.gross_deficit_cp == 500
+    assert exchange_assessment.compensation_cp == 300
+    assert exchange_assessment.deficit_cp == 200
+    assert exchange_assessment.odds_mode == "none"
+    assert minor_assessment is not None
+    assert minor_assessment.gross_deficit_cp == 300
+    assert minor_assessment.compensation_cp == 100
+    assert minor_assessment.minor_count_deficit == 1
+    assert minor_assessment.odds_mode == "knight"
+
+
+@pytest.mark.parametrize(
+    ("case", "player_pieces", "opponent_pieces", "title", "reason"),
+    [
+        (
+            "equal",
+            FULL,
+            FULL,
+            "BT4 normal",
+            "Material equal; net equal. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "two pawns down",
+            without(FULL, "PP"),
+            FULL,
+            "BT4 normal",
+            "2 pawns gap (2); no compensation; net -2. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "exchange down",
+            without(FULL, "R"),
+            without(FULL, "N"),
+            "BT4 normal",
+            "rook gap (5); compensation: knight (3); net -2. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "bishop down",
+            without(FULL, "B"),
+            FULL,
+            "T1 minor-equivalent",
+            "bishop gap (3); no compensation; net -3. T1 is the closest available minor-equivalent odds family.",
+        ),
+        (
+            "rook down",
+            without(FULL, "R"),
+            FULL,
+            "T1 rook-equivalent",
+            "rook gap (5); no compensation; net -5. T1 is the closest available rook-equivalent odds family.",
+        ),
+        (
+            "queen for two pawns",
+            without(FULL, "Q"),
+            without(FULL, "PP"),
+            "T1 queen-for-material",
+            "queen gap (9); compensation: 2 pawns (2); net -7. T1 is the closest available intermediate odds family.",
+        ),
+        (
+            "queen for one pawn",
+            without(FULL, "Q"),
+            without(FULL, "P"),
+            "LQO near-full queen",
+            "queen gap (9); compensation: pawn (1); net -8. LQO is the closest available near-full-queen odds family.",
+        ),
+        (
+            "opponent queen loss",
+            FULL,
+            without(FULL, "Q"),
+            "BT4 normal",
+            "Ahead by queen (9); net +9. BT4 matches this ordinary or sufficiently compensated imbalance.",
+        ),
+        (
+            "multiple gaps and compensation",
+            without(FULL, "QR"),
+            without(FULL, "BP"),
+            "T1 queen-for-material",
+            "rook and queen gaps (14); compensation: pawn and bishop (4); net -10. T1 is the closest available intermediate odds family.",
+        ),
+    ],
+)
+def test_material_explanations_name_composition_compensation_and_network(
+    case: str,
+    player_pieces: str,
+    opponent_pieces: str,
+    title: str,
+    reason: str,
+) -> None:
+    assessment = assess_material(
+        material_board(player_pieces, opponent_pieces, chess.WHITE),
+        chess.WHITE,
+    )
+
+    assert assessment is not None, case
+    assert odds_mode_label(assessment.odds_mode) == title, case
+    assert explain_material_assessment(assessment) == reason, case
+
+
+def test_live_material_reversal_is_stateless_and_player_relative() -> None:
+    white_down_queen = material_board(without(FULL, "Q"), FULL, chess.WHITE)
+    equal_again = material_board(without(FULL, "Q"), without(FULL, "Q"), chess.WHITE)
+    black_down_rook = material_board(FULL, without(FULL, "R"), chess.WHITE)
+
+    assert detect_odds_mode(white_down_queen, chess.WHITE) == "queen"
+    assert detect_odds_mode(equal_again, chess.WHITE) == "none"
+    assert detect_odds_mode(black_down_rook, chess.WHITE) == "none"
+    assert detect_odds_mode(black_down_rook, chess.BLACK) == "rook"
+
+
+@pytest.mark.parametrize(
+    ("player_color", "fen", "expected"),
+    [
+        # A recent 65-move queen-odds game: compensation grew from one pawn to
+        # several pieces before equality. The legacy presence-only detector
+        # incorrectly stayed on LQO through every position containing Black's
+        # queen.
+        (chess.WHITE, "r1bqkbnr/pp1p1ppp/2n5/4p3/8/2P5/PP1PPPPP/RNB1KBNR w KQkq - 0 4", "queen"),
+        (chess.WHITE, "4n1k1/2b1nr1p/1q4p1/p1Np4/1p1P2P1/P1P2P1R/KP6/2B4R w - - 0 43", "queen_for_knight"),
+        (chess.WHITE, "5k2/4n1nR/1q1b1rp1/p2p2N1/1p1P1PP1/P1P5/KP6/2B4R w - - 1 47", "queen_for_knight"),
+        (chess.WHITE, "6nR/6n1/1q1b1kp1/p2p4/1p1P1PP1/P1P5/KP6/2B4R w - - 0 50", "queen_for_knight"),
+        (chess.WHITE, "6R1/6n1/1q1b1kp1/p2p4/3P1PP1/P1p5/KP6/2B4R w - - 0 51", "none"),
+        # The reported late endgame: White has R+N+6P versus R+B+N+5P.
+        # Net value is only -2 because of the extra pawn, but the unmatched
+        # bishop remains a full-minor structural handicap.
+        (chess.WHITE, "8/prp2kpp/5n2/4p3/P7/b1PP1N2/3K1PPP/7R w - - 0 21", "knight"),
+    ],
+)
+def test_recent_live_positions_follow_compensation_and_endgame_composition(
+    player_color: chess.Color,
+    fen: str,
+    expected: str,
+) -> None:
+    assert detect_odds_mode(chess.Board(fen), player_color) == expected
+
+
+@pytest.mark.parametrize(
+    ("game", "player_color", "timeline"),
+    [
+        (
+            "c0jHLa8L",
+            chess.BLACK,
+            [
+                ("rnb1kbnr/pp1ppppp/2p5/8/3P4/N1P5/PP1BPPPP/R2QKBNR b KQkq - 0 4", "queen"),
+                ("r1b1kbnr/pp2pp2/2p3p1/4n2p/3P4/2PB4/PPNB1PPP/R2Q1RK1 w q - 0 12", "queen_for_knight"),
+                ("r1b1kbnr/pp2pp2/2p3p1/4P2p/8/2PB4/PPNB1PPP/R2Q1RK1 b q - 0 12", "queen"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1bP2/2P1B3/P2r2rP/3R1K2 w - - 0 25", "none"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1bP2/2P5/P2B2rP/3R1K2 b - - 0 25", "queen_for_knight"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1bP2/2P5/P2r4/4RK2 w - - 0 27", "none"),
+                ("4k3/pp2bp2/2p1p3/4Pp1p/1PQ1RP2/2P5/P2r4/5K2 b - - 0 27", "queen_for_knight"),
+                ("4k3/pp2bp2/2p1p3/4P2p/1PQ1pP2/2P5/P2r4/5K2 w - - 0 28", "none"),
+                ("4k3/1p2bp2/2p1p3/r7/7p/2P4Q/2K5/8 w - - 0 39", "none"),
+            ],
+        ),
+        (
+            "wKVCC10C",
+            chess.WHITE,
+            [
+                ("r1bqk1nr/ppppppbp/n5p1/8/8/2P5/PP1PPPPP/RNB1KBNR w KQkq - 0 4", "queen"),
+                ("r2qk1nr/p3ppbp/Bp1p2p1/8/4b2P/2P5/PP1P1PP1/RNB1K1N1 b Qkq - 0 9", "queen_for_knight"),
+                ("r2q1k1r/p3pp2/1p1p1n2/1B5p/3P4/2P1b3/PP1N1Pp1/2K3R1 w - - 0 20", "queen"),
+                ("r2q1k1r/p3pp2/1p1p1n2/1B5p/3P4/2P1P3/PP1N2p1/2K3R1 b - - 0 20", "queen_for_knight"),
+                ("2r5/p3kpr1/1p2pN2/3p4/3P4/2P1P2p/PP1KB1p1/6R1 b - - 0 30", "none"),
+                ("2r5/p3kpr1/1p6/3p4/3P4/2P1P3/PP1KB1pp/6R1 w - - 0 32", "knight"),
+                ("2r5/p3kpr1/1p6/3p4/3P4/2P1P3/PP1KB1Rp/8 b - - 0 32", "none"),
+                ("2r5/p3kp2/1p6/3p4/3P4/2P1P3/PP1KB1rp/8 w - - 0 33", "queen_for_knight"),
+                ("2r5/p3kp2/1p6/3p4/3PP3/2P5/PP2K2p/8 b - - 0 34", "rook"),
+                ("2r5/p3kp2/1p6/8/3Pp3/2P5/PP2K2p/8 w - - 0 35", "queen_for_knight"),
+            ],
+        ),
+    ],
+)
+def test_latest_games_recover_and_reverse_without_sticky_modes(
+    game: str,
+    player_color: chess.Color,
+    timeline: list[tuple[str, str]],
+) -> None:
+    observed = [
+        detect_odds_mode(chess.Board(fen), player_color)
+        for fen, _expected in timeline
+    ]
+
+    assert observed == [expected for _fen, expected in timeline], game

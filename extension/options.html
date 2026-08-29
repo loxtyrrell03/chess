@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Local Chess Training Bridge</title>
+    <link rel="stylesheet" href="options.css">
+  </head>
+  <body>
+    <main>
+      <header>
+        <span class="eyebrow">Local training only</span>
+        <h1>Chess training bridge</h1>
+        <p>The extension connects automatically to the local control centre.</p>
+      </header>
+
+      <section class="panel" aria-labelledby="connection-heading">
+        <div class="section-heading">
+          <div>
+            <h2 id="connection-heading">Connection</h2>
+            <p id="connection-status" class="status" data-state="idle">Checking local service…</p>
+          </div>
+          <span id="status-dot" class="status-dot" aria-hidden="true"></span>
+        </div>
+
+        <p class="hint">No pairing code or configuration is required. Start Chess Trainer and refresh the Chess.com or Lichess tab.</p>
+        <p class="hint">Best moves and evaluation are displayed as position-bound overlays. The extension never clicks the board.</p>
+      </section>
+
+      <section class="notice" aria-labelledby="fair-play-heading">
+        <h2 id="fair-play-heading">Fair-play boundary</h2>
+        <p>The bridge accepts only its fixed loopback WebSocket endpoint and Chrome-extension origin.</p>
+      </section>
+    </main>
+    <script src="options.js"></script>
+  </body>
+</html>
