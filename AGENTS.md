@@ -1,5 +1,13 @@
 # Repository guidance
 
+## Milestone documentation
+
+- Agents must update this `AGENTS.md` after every meaningful, verified milestone and include that update in the same milestone commit.
+- Record concise, durable context: important behavior or architecture changes, decisions and their rationale, relevant tests or verification, deployment or runtime state, and material limitations or follow-up work.
+- Update or replace stale guidance instead of accumulating contradictory history; keep notes factual and useful to future agents.
+- Do not record secrets, credentials, personal data, raw transcripts, routine command logs, or transient debugging noise.
+
+
 ## Scope
 
 These instructions apply to the entire repository unless a more specific `AGENTS.md` exists deeper in the tree.
@@ -20,4 +28,3 @@ These instructions apply to the entire repository unless a more specific `AGENTS
 
 - At each meaningful working milestone, inspect the diff, stage only relevant files, commit with a clear message, and push to the configured remote.
 - Do not rewrite shared history or force-push unless the user explicitly requests it.
-
